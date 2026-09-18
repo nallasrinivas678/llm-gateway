@@ -1,0 +1,17 @@
+## .NET / Visual Studio
+bin/
+obj/
+*.user
+.vs/
+*.suo
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## User secrets (never commit real secrets)
+secrets.json
+
+## OS
+.DS_Store
+Thumbs.db
