@@ -6,7 +6,11 @@ using Polly.Timeout;
 namespace LlmGateway.Api.Providers;
 
 // Tries providers in priority order, falling back to the next one when a provider's
-// resilience pipeline gives up (retries exhausted, circuit open, or per-attempt timeout).
+// resilience pipeline gives up (retries exhausted, circuit open, per-attempt timeout - including
+// the framework's own HttpClient.Timeout backstop, not just Polly's TimeoutRejectedException) or
+// the provider isn't configured (e.g. missing endpoint/API key surfaces as InvalidOperationException).
+// The !cancellationToken.IsCancellationRequested guard ensures caller-initiated cancellation (e.g.
+// the HTTP client disconnecting) propagates immediately instead of wastefully trying more providers.
 public class LlmProviderRouter
 {
     private readonly List<ILlmProvider> _providers;
@@ -34,7 +38,8 @@ public class LlmProviderRouter
             {
                 return await provider.CompleteAsync(request, cancellationToken);
             }
-            catch (Exception ex) when (ex is BrokenCircuitException or HttpRequestException or TimeoutRejectedException)
+            catch (Exception ex) when (ex is BrokenCircuitException or HttpRequestException or TimeoutRejectedException or InvalidOperationException or TaskCanceledException
+                && !cancellationToken.IsCancellationRequested)
             {
                 lastException = ex;
                 var remaining = _providers.Count - i - 1;

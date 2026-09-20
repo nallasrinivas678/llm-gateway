@@ -10,6 +10,8 @@ LLM APIs behave like any other flaky third-party network dependency: they rate-l
 
 ## Architecture
 
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation-level detail on individual subsystems (currently: response caching).
+
 ```
 Caller (e.g. Claims Triage Agent, or any client)
    │
@@ -179,6 +181,7 @@ llm-gateway/
 │   └── LlmGateway.Tests/               # unit + integration tests (incl. mock provider for resilience tests)
 ├── docker-compose.yml                  # local Redis + Cosmos emulator
 └── README.md
+#command to run docker:  docker-compose up -d
 ```
 
 ## Roadmap
