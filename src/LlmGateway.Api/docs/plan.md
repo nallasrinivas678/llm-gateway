@@ -179,6 +179,7 @@ LlmGateway.sln
 8. `GoogleOAuthService` + `CalendarConnector` — first Google integration (simplest surface).
 9. `GmailConnector`, `DocsConnector` — added incrementally, same OAuth service.
 10. `JobApplicationTools` — reads `user_profiles`, writes `job_applications`, drafts tailored resume/cover letter text via LLM (no auto-submit in v1).
+11. `GET /assistant/daily-summary` (`DailySummaryController` + `DailySummaryService`) — on-demand endpoint for the web/iOS app: fetches Gmail (orders/bills/travel, via `GmailConnector.SearchImportantMessagesAsync`) and Calendar events concurrently, then makes a single non-tool-calling `ILlmProvider.CompleteAsync` call to produce a short written summary. Bypasses `ChatOrchestrator`/`ToolRegistry` entirely — no conversational loop needed. Config: `DailySummary:*` in `appsettings.json` (per-category/total email caps, calendar event cap, LLM timeout/retry count). Required adding the `gmail.readonly` scope to `GoogleOAuth:Scopes` — **users who connected Google before this change must redo the OAuth flow** to pick it up, since `GoogleOAuthService` has no incremental/silent re-scoping.
 
 ---
 

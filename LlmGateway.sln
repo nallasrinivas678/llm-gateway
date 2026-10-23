@@ -10,6 +10,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{24DFD159-80C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LlmGateway.Assistant", "src\LlmGateway.Assistant\LlmGateway.Assistant.csproj", "{3E48DAB9-9531-49D8-B60F-6407E026A082}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{2B2D63B6-F590-4D27-A418-793A11FBE9BD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LlmGateway.Assistant.Tests", "tests\LlmGateway.Assistant.Tests\LlmGateway.Assistant.Tests.csproj", "{233756AA-96BB-40D0-A582-60F793C0157D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,11 +32,16 @@ Global
 		{3E48DAB9-9531-49D8-B60F-6407E026A082}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3E48DAB9-9531-49D8-B60F-6407E026A082}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3E48DAB9-9531-49D8-B60F-6407E026A082}.Release|Any CPU.Build.0 = Release|Any CPU
+		{233756AA-96BB-40D0-A582-60F793C0157D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{233756AA-96BB-40D0-A582-60F793C0157D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{233756AA-96BB-40D0-A582-60F793C0157D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{233756AA-96BB-40D0-A582-60F793C0157D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{3E48DAB9-9531-49D8-B60F-6407E026A082} = {24DFD159-80C4-48F7-AE97-6466D57785E4}
+		{233756AA-96BB-40D0-A582-60F793C0157D} = {2B2D63B6-F590-4D27-A418-793A11FBE9BD}
 	EndGlobalSection
 EndGlobal
