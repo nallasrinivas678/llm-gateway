@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+.git/
+.github/
+tests/
+src/LlmGateway.Api/
+.vs/
+*.user
