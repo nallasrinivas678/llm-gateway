@@ -1,5 +1,6 @@
 using LlmGateway.Assistant.Auth;
 using LlmGateway.Assistant.Connectors;
+using LlmGateway.Assistant.DailySummary;
 using LlmGateway.Assistant.Endpoints;
 using LlmGateway.Assistant.Orchestrator;
 using LlmGateway.Assistant.Providers;
@@ -16,6 +17,7 @@ builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("A
 builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection("Gemini"));
 builder.Services.Configure<SupabaseOptions>(builder.Configuration.GetSection("Supabase"));
 builder.Services.Configure<GoogleOAuthOptions>(builder.Configuration.GetSection("GoogleOAuth"));
+builder.Services.Configure<DailySummaryOptions>(builder.Configuration.GetSection("DailySummary"));
 
 var supabaseAuthOptions = new SupabaseAuthOptions();
 builder.Configuration.GetSection("SupabaseAuth").Bind(supabaseAuthOptions);
@@ -79,6 +81,10 @@ builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
 builder.Services.AddScoped<ToolCallDispatcher>();
 builder.Services.AddScoped<ChatOrchestrator>();
 
+// Daily summary (Gmail orders/bills/travel + Calendar -> single LLM summarization call).
+// Scoped: depends on the Scoped connectors above via CurrentUserContext/GoogleOAuthService.
+builder.Services.AddScoped<DailySummaryService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -91,6 +97,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapChatEndpoints();
+app.MapDailySummaryEndpoints();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestampUtc = DateTimeOffset.UtcNow }));
 
