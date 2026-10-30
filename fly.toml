@@ -4,7 +4,7 @@
 #
 
 app = 'llm-gateway-prnhia'
-primary_region = 'ams'
+primary_region = 'iad'
 
 [build]
   dockerfile = 'Dockerfile'
