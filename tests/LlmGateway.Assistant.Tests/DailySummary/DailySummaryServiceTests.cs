@@ -94,4 +94,39 @@ public class DailySummaryServiceTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.BuildAsync(Guid.NewGuid()));
         Assert.Equal(2, llm.ReceivedRequests.Count); // initial attempt + 1 retry
     }
+
+    [Fact]
+    public async Task StreamAsync_YieldsStatusThenChunksThenDone_WithTheFullSummaryAssembled()
+    {
+        var emails = new List<GmailMessageSummary>
+        {
+            new() { Id = "1", Category = "order", Subject = "Your order has shipped", From = "orders@shop.com", Snippet = "On its way", Date = DateTimeOffset.UtcNow }
+        };
+        var events = new List<CalendarEvent>
+        {
+            new() { Id = "e1", Summary = "Dentist appointment", Start = DateTimeOffset.UtcNow.AddHours(2), End = DateTimeOffset.UtcNow.AddHours(3) }
+        };
+
+        var gmail = new FakeGmailConnector(emails);
+        var calendar = new FakeCalendarConnector(events);
+        var llm = new FakeLlmProvider("Here is your summary.");
+
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, DefaultOptions());
+
+        var received = new List<DailySummaryStreamEvent>();
+        await foreach (var streamEvent in service.StreamAsync(Guid.NewGuid()))
+        {
+            received.Add(streamEvent);
+        }
+
+        Assert.IsType<DailySummaryStreamEvent.Status>(received[0]);
+        var chunks = received.OfType<DailySummaryStreamEvent.Chunk>().ToList();
+        Assert.Single(chunks);
+        Assert.Equal("Here is your summary.", chunks[0].Text);
+
+        var done = Assert.IsType<DailySummaryStreamEvent.Done>(received[^1]);
+        Assert.Equal("Here is your summary.", done.Result.Summary);
+        Assert.Single(done.Result.Emails);
+        Assert.Single(done.Result.Events);
+    }
 }

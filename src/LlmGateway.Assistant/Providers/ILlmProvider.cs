@@ -11,4 +11,8 @@ namespace LlmGateway.Assistant.Providers;
 public interface ILlmProvider
 {
     Task<ChatResponse> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default);
+
+    // Yields text deltas as they arrive, for callers that want to forward output incrementally
+    // (e.g. DailySummary's SSE endpoint) instead of waiting for the full completion.
+    IAsyncEnumerable<string> StreamAsync(ChatRequest request, CancellationToken cancellationToken = default);
 }

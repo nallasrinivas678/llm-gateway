@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using LlmGateway.Assistant.Connectors;
 using LlmGateway.Assistant.Models;
@@ -61,6 +62,56 @@ public class DailySummaryService
             emails.Select(e => new EmailHighlightDto(e.Category, e.Subject, e.From, e.Date)).ToList(),
             events.Select(e => new CalendarHighlightDto(e.Summary, e.Start, e.End)).ToList(),
             DateTimeOffset.UtcNow);
+    }
+
+    // Same data-fetch + prompt as BuildAsync, but streams the LLM's text deltas as they arrive
+    // instead of waiting for the full completion - used by the SSE /stream endpoint so the
+    // frontend can show progress instead of ~10s of silence while Gemini writes the summary.
+    // Unlike BuildAsync, this doesn't retry the LLM call: once chunks have started reaching the
+    // client, retrying would mean re-sending text it already has, so a mid-stream failure just
+    // surfaces as an error event instead.
+    public async IAsyncEnumerable<DailySummaryStreamEvent> StreamAsync(
+        Guid userId,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        yield return new DailySummaryStreamEvent.Status("Fetching your emails and calendar…");
+
+        var emailsTask = _gmailConnector.SearchImportantMessagesAsync(userId, cancellationToken);
+        var eventsTask = _calendarConnector.ListUpcomingEventsAsync(userId, _options.MaxCalendarEvents, cancellationToken);
+        await Task.WhenAll(emailsTask, eventsTask);
+
+        var emails = emailsTask.Result;
+        var events = eventsTask.Result;
+
+        yield return new DailySummaryStreamEvent.Status("Writing your summary…");
+
+        var request = new ChatRequest
+        {
+            SystemPrompt = SystemPrompt,
+            Tools = new List<ToolSchema>(),
+            Messages = new List<ChatMessage>
+            {
+                new() { Role = "user", Content = BuildPrompt(emails, events) }
+            }
+        };
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.LlmTimeoutSeconds));
+
+        var summaryBuilder = new StringBuilder();
+        await foreach (var delta in _llmProvider.StreamAsync(request, timeoutCts.Token))
+        {
+            summaryBuilder.Append(delta);
+            yield return new DailySummaryStreamEvent.Chunk(delta);
+        }
+
+        var dto = new DailySummaryResponseDto(
+            summaryBuilder.ToString(),
+            emails.Select(e => new EmailHighlightDto(e.Category, e.Subject, e.From, e.Date)).ToList(),
+            events.Select(e => new CalendarHighlightDto(e.Summary, e.Start, e.End)).ToList(),
+            DateTimeOffset.UtcNow);
+
+        yield return new DailySummaryStreamEvent.Done(dto);
     }
 
     private static string BuildPrompt(List<GmailMessageSummary> emails, List<CalendarEvent> events)

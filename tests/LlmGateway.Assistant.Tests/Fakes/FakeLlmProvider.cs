@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using LlmGateway.Assistant.Models;
 using LlmGateway.Assistant.Providers;
 
@@ -28,5 +29,11 @@ public class FakeLlmProvider : ILlmProvider
         }
 
         return Task.FromResult(new ChatResponse { Content = _content });
+    }
+
+    public async IAsyncEnumerable<string> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var response = await CompleteAsync(request, cancellationToken);
+        yield return response.Content;
     }
 }
