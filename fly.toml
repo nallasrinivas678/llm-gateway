@@ -10,8 +10,8 @@ primary_region = 'ams'
   dockerfile = 'Dockerfile'
 
 [env]
-  ASPNETCORE_ENVIRONMENT = 'Production'
-  Llm__Provider = 'Gemini'
+  ASPNETCORE_ENVIRONMENT = "Production"
+  Llm__Provider = "Gemini"
 
 [http_service]
   internal_port = 8080
