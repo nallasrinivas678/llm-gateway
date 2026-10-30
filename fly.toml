@@ -6,7 +6,7 @@ primary_region = "iad"             # pick the region closest to your Supabase pr
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
-  Llm__Provider = "Anthropic"
+  Llm__Provider = "Gemini"
 
 [http_service]
   internal_port = 8080

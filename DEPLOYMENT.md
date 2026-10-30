@@ -72,7 +72,8 @@ Non-secret tuning values (`Llm__Provider`, `DailySummary:*`) live directly in `f
 - [x] `Dockerfile` / `.dockerignore` / `fly.toml` added, verified via a local `dotnet publish` + run against `/health`
 - [x] Fly app `llm-gateway-prnhia` exists; `fly.toml` points at it
 - [x] `Supabase__ConnectionString`, `SupabaseAuth__JwtSecret`, `SupabaseAuth__Issuer`, `GoogleOAuth__ClientId`, `GoogleOAuth__ClientSecret`, `GoogleOAuth__RedirectUri`, `Gemini__ApiKey` are set
-- [ ] **`Anthropic__ApiKey` is not set yet** — `Llm__Provider` defaults to `Anthropic` in `fly.toml`, so until this is set (or `Llm__Provider` is switched to `Gemini`), LLM calls will fail even though the app itself is healthy
+- [x] `Llm__Provider` is set to `Gemini` in `fly.toml` (since `Anthropic__ApiKey` was never set) — Gemini is the active provider
+- [ ] `Anthropic__ApiKey` is still unset; `AnthropicProvider` is only reachable again if `Llm__Provider` is switched back
 - [ ] No custom domain yet — `flyctl certs list` shows nothing; `api.tasktide.app` isn't pointed at Fly or certified
 - [ ] `GoogleOAuthService.ExchangeCodeAsync`/`BuildAuthorizationUrl` exist but aren't wired to an HTTP route — nothing can actually complete the Google OAuth redirect yet
 - [ ] A stray leftover secret `Gemini_Apikey` (typo'd name from an earlier attempt) is still set — harmless since nothing reads it, safe to remove with `flyctl secrets unset Gemini_Apikey`
