@@ -8,9 +8,13 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace LlmGateway.Assistant.Auth;
 
-// Validates the mobile app's Supabase JWT (Build order step 5). Supabase issues standard HS256
-// JWTs signed with the project's JWT secret - this wires that up as ASP.NET Core's JWT bearer
-// authentication rather than hand-rolling token parsing, so every endpoint just needs
+// Validates the mobile app's Supabase JWT (Build order step 5). Supabase migrated every project
+// to asymmetric (ES256) per-key signing around October 2025 - real session JWTs now carry a
+// `kid` and verify against Supabase's published JWKS, not a shared secret. SupabaseJwksKeyResolver
+// fetches those keys from `{Issuer}/.well-known/jwks.json`. The old HS256 secret is kept as an
+// additional candidate key (harmless if unused) for any project still on the legacy signing mode,
+// or any already-issued-but-unexpired legacy token. Wiring this up as ASP.NET Core's JWT bearer
+// authentication (rather than hand-rolling token parsing) means every endpoint just needs
 // [Authorize] / RequireAuthorization() instead of custom middleware.
 public static class SupabaseJwtValidator
 {
@@ -27,6 +31,10 @@ public static class SupabaseJwtValidator
             ? RandomNumberGenerator.GetBytes(32)
             : Encoding.UTF8.GetBytes(options.JwtSecret);
 
+        // Requires Issuer to be set, since that's where the JWKS endpoint lives - with no issuer
+        // configured there's nothing to resolve against, same "fail closed" posture as above.
+        var jwksResolver = string.IsNullOrEmpty(options.Issuer) ? null : new SupabaseJwksKeyResolver(options.Issuer);
+
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(bearerOptions =>
             {
@@ -34,6 +42,9 @@ public static class SupabaseJwtValidator
                 {
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = new SymmetricSecurityKey(secretBytes),
+                    IssuerSigningKeyResolver = jwksResolver is null
+                        ? null
+                        : jwksResolver.ResolveSigningKeys,
                     ValidateIssuer = !string.IsNullOrEmpty(options.Issuer),
                     ValidIssuer = options.Issuer,
                     ValidateAudience = false,
