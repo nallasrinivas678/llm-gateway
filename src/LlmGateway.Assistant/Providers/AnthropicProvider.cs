@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LlmGateway.Assistant.Models;
@@ -62,6 +63,15 @@ public class AnthropicProvider : ILlmProvider
         }
 
         return response;
+    }
+
+    // Not wired to Anthropic's native SSE streaming (`stream: true`) yet - this just yields the
+    // full completion as one chunk, so callers coded against the streaming interface still work
+    // when this provider is selected, without pretending to stream.
+    public async IAsyncEnumerable<string> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var response = await CompleteAsync(request, cancellationToken);
+        yield return response.Content;
     }
 
     // Anthropic has no "tool" role: a tool result is a user-role turn carrying a tool_result

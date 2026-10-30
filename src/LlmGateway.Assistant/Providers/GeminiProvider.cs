@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LlmGateway.Assistant.Models;
@@ -24,28 +25,7 @@ public class GeminiProvider : ILlmProvider
 
     public async Task<ChatResponse> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
     {
-        var payload = new GeminiRequest
-        {
-            Contents = BuildContents(request.Messages),
-            SystemInstruction = request.SystemPrompt is null
-                ? null
-                : new GeminiContent { Parts = new List<GeminiPart> { new() { Text = request.SystemPrompt } } },
-            Tools = request.Tools.Count == 0
-                ? null
-                : new List<GeminiToolDeclaration>
-                {
-                    new()
-                    {
-                        FunctionDeclarations = request.Tools.ConvertAll(t => new GeminiFunctionDeclaration
-                        {
-                            Name = t.Name,
-                            Description = t.Description,
-                            Parameters = t.ParametersSchema
-                        })
-                    }
-                }
-        };
-
+        var payload = BuildPayload(request);
         var requestUri = $"v1beta/models/{_options.Model}:generateContent";
         using var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, requestUri)
         {
@@ -79,6 +59,74 @@ public class GeminiProvider : ILlmProvider
 
         return response;
     }
+
+    // Gemini's streaming endpoint (`:streamGenerateContent?alt=sse`) sends one SSE "data:" line
+    // per partial GenerateContentResponse chunk - each chunk's parts carry the next slice of text,
+    // so forwarding part.Text as it arrives gives real incremental output (not a fake/simulated
+    // stream over an already-complete response).
+    public async IAsyncEnumerable<string> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var payload = BuildPayload(request);
+        var requestUri = $"v1beta/models/{_options.Model}:streamGenerateContent?alt=sse";
+        using var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, requestUri)
+        {
+            Content = JsonContent.Create(payload)
+        };
+        httpRequestMessage.Headers.Add("x-goog-api-key", _options.ApiKey);
+
+        using var httpResponse = await _httpClient.SendAsync(
+            httpRequestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        httpResponse.EnsureSuccessStatusCode();
+
+        using var stream = await httpResponse.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        {
+            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var json = line["data:".Length..].Trim();
+            if (json.Length == 0)
+            {
+                continue;
+            }
+
+            var chunk = JsonSerializer.Deserialize<GeminiResponse>(json);
+            var parts = chunk?.Candidates.FirstOrDefault()?.Content.Parts ?? new List<GeminiPart>();
+            foreach (var part in parts)
+            {
+                if (part.Text is not null)
+                {
+                    yield return part.Text;
+                }
+            }
+        }
+    }
+
+    private static GeminiRequest BuildPayload(ChatRequest request) => new()
+    {
+        Contents = BuildContents(request.Messages),
+        SystemInstruction = request.SystemPrompt is null
+            ? null
+            : new GeminiContent { Parts = new List<GeminiPart> { new() { Text = request.SystemPrompt } } },
+        Tools = request.Tools.Count == 0
+            ? null
+            : new List<GeminiToolDeclaration>
+            {
+                new()
+                {
+                    FunctionDeclarations = request.Tools.ConvertAll(t => new GeminiFunctionDeclaration
+                    {
+                        Name = t.Name,
+                        Description = t.Description,
+                        Parameters = t.ParametersSchema
+                    })
+                }
+            }
+    };
 
     private static List<GeminiContent> BuildContents(IEnumerable<ChatMessage> messages)
     {
