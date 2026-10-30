@@ -53,6 +53,15 @@ ASP.NET Core reads environment variables using `__` (double underscore) as the c
 | [`.dockerignore`](.dockerignore) | Keeps `bin/obj/tests/LlmGateway.Api` out of the build context |
 | [`fly.toml`](fly.toml) | Fly app config: build source, non-secret env vars, health check against `/health` |
 
+## Connecting a user's Google account
+
+`GoogleOAuthService` (authorization-code + refresh-token exchange, `google_tokens` storage) existed before this, but had no HTTP route. Now wired up in [`GoogleAuthController.cs`](src/LlmGateway.Assistant/Endpoints/GoogleAuthController.cs):
+
+1. The frontend calls `GET /auth/google/start` (authenticated, same Supabase JWT as every other endpoint) and gets back `{ "authorizationUrl": "..." }`. It's a JSON response rather than a redirect, since a plain browser navigation wouldn't carry the bearer token.
+2. The frontend navigates the browser to that URL. The user consents on Google's own page.
+3. Google redirects back to `GET /auth/google/callback?code=...&state=<userId>` — unauthenticated (Google doesn't send our JWT), so the user is identified via `state`, which `BuildAuthorizationUrl` already sets to the user's id.
+4. The callback exchanges the code and stores the token in `google_tokens`, then returns a small HTML confirmation page.
+
 ## Secrets (set via `flyctl secrets set`, never committed)
 
 | Env var | Source |
@@ -74,10 +83,12 @@ Non-secret tuning values (`Llm__Provider`, `DailySummary:*`) live directly in `f
 - [x] `Supabase__ConnectionString`, `SupabaseAuth__JwtSecret`, `SupabaseAuth__Issuer`, `GoogleOAuth__ClientId`, `GoogleOAuth__ClientSecret`, `GoogleOAuth__RedirectUri`, `Gemini__ApiKey` are set
 - [x] `Llm__Provider` is set to `Gemini` in `fly.toml` (since `Anthropic__ApiKey` was never set) — Gemini is the active provider
 - [ ] `Anthropic__ApiKey` is still unset; `AnthropicProvider` is only reachable again if `Llm__Provider` is switched back
-- [ ] No custom domain yet — `flyctl certs list` shows nothing; `api.tasktide.app` isn't pointed at Fly or certified
-- [ ] `GoogleOAuthService.ExchangeCodeAsync`/`BuildAuthorizationUrl` exist but aren't wired to an HTTP route — nothing can actually complete the Google OAuth redirect yet
+- [x] `GoogleOAuth__RedirectUri` points at the Fly domain (`https://llm-gateway-prnhia.fly.dev/auth/google/callback`) — the custom domain is intentionally skipped for now (see "Custom domain" note below)
+- [x] Google Cloud Console is set up: Gmail + Calendar APIs enabled, OAuth consent screen configured and published, OAuth client created with a matching redirect URI
+- [x] `GET /auth/google/start` (authenticated) and `GET /auth/google/callback` are now wired up to `GoogleOAuthService.BuildAuthorizationUrl`/`ExchangeCodeAsync` — the Google OAuth flow can actually complete end-to-end
 - [ ] A stray leftover secret `Gemini_Apikey` (typo'd name from an earlier attempt) is still set — harmless since nothing reads it, safe to remove with `flyctl secrets unset Gemini_Apikey`
-- [ ] `fly.toml`'s `primary_region` says `iad`, but the two existing machines actually run in `ams` — cosmetic mismatch from an earlier manual `flyctl launch`, not a functional issue
+
+**Custom domain**: intentionally deferred. `llm-gateway-prnhia.fly.dev` already has a valid Fly-issued TLS cert and works identically to a custom domain for every endpoint, OAuth included now that the redirect URI points there too — so there's no functional reason to rush `api.tasktide.app` DNS/certs. Revisit once ready for a stable, branded URL.
 
 ## Common operations
 
