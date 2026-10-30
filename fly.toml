@@ -1,4 +1,4 @@
-app = "tasktide-llm-gateway"       # pick the real app name at `fly launch` time
+app = "llm-gateway-prnhia"
 primary_region = "iad"             # pick the region closest to your Supabase project
 
 [build]
