@@ -1,3 +1,4 @@
+using LlmGateway.Assistant;
 using LlmGateway.Assistant.Auth;
 using LlmGateway.Assistant.Connectors;
 using LlmGateway.Assistant.DailySummary;
@@ -18,6 +19,14 @@ builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection("Gemi
 builder.Services.Configure<SupabaseOptions>(builder.Configuration.GetSection("Supabase"));
 builder.Services.Configure<GoogleOAuthOptions>(builder.Configuration.GetSection("GoogleOAuth"));
 builder.Services.Configure<DailySummaryOptions>(builder.Configuration.GetSection("DailySummary"));
+
+// Config-driven so the allowed origins (the deployed frontend's domain) can change via a Fly
+// secret without a redeploy. No AllowCredentials() - the frontend sends the Supabase JWT as an
+// Authorization header, not cookies, so credentialed CORS isn't needed.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new CorsOptions().AllowedOrigins;
+builder.Services.AddCors(corsOptions => corsOptions.AddDefaultPolicy(policy =>
+    policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod()));
 
 var supabaseAuthOptions = new SupabaseAuthOptions();
 builder.Configuration.GetSection("SupabaseAuth").Bind(supabaseAuthOptions);
@@ -93,6 +102,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
