@@ -98,6 +98,7 @@ app.UseAuthorization();
 
 app.MapChatEndpoints();
 app.MapDailySummaryEndpoints();
+app.MapGoogleAuthEndpoints();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestampUtc = DateTimeOffset.UtcNow }));
 
