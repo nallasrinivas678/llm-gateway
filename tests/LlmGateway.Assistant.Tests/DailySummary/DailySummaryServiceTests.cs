@@ -1,5 +1,6 @@
 using LlmGateway.Assistant.Connectors;
 using LlmGateway.Assistant.DailySummary;
+using LlmGateway.Assistant.Models;
 using LlmGateway.Assistant.Tests.Fakes;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -34,7 +35,7 @@ public class DailySummaryServiceTests
         var calendar = new FakeCalendarConnector(events);
         var llm = new FakeLlmProvider("Summary text");
 
-        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, DefaultOptions());
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, new FakeDailySummaryCache(), DefaultOptions());
 
         var result = await service.BuildAsync(Guid.NewGuid());
 
@@ -58,7 +59,7 @@ public class DailySummaryServiceTests
         var calendar = new FakeCalendarConnector();
         var llm = new FakeLlmProvider("Nothing much today.");
 
-        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, DefaultOptions());
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, new FakeDailySummaryCache(), DefaultOptions());
 
         var result = await service.BuildAsync(Guid.NewGuid());
 
@@ -74,7 +75,7 @@ public class DailySummaryServiceTests
         var calendar = new FakeCalendarConnector();
         var llm = new FakeLlmProvider("Recovered.", throwCount: 1);
 
-        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, DefaultOptions(llmMaxRetries: 1));
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, new FakeDailySummaryCache(), DefaultOptions(llmMaxRetries: 1));
 
         var result = await service.BuildAsync(Guid.NewGuid());
 
@@ -89,7 +90,7 @@ public class DailySummaryServiceTests
         var calendar = new FakeCalendarConnector();
         var llm = new FakeLlmProvider(throwCount: int.MaxValue);
 
-        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, DefaultOptions(llmMaxRetries: 1));
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, new FakeDailySummaryCache(), DefaultOptions(llmMaxRetries: 1));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.BuildAsync(Guid.NewGuid()));
         Assert.Equal(2, llm.ReceivedRequests.Count); // initial attempt + 1 retry
@@ -111,7 +112,7 @@ public class DailySummaryServiceTests
         var calendar = new FakeCalendarConnector(events);
         var llm = new FakeLlmProvider("Here is your summary.");
 
-        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, DefaultOptions());
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, new FakeDailySummaryCache(), DefaultOptions());
 
         var received = new List<DailySummaryStreamEvent>();
         await foreach (var streamEvent in service.StreamAsync(Guid.NewGuid()))
@@ -128,5 +129,70 @@ public class DailySummaryServiceTests
         Assert.Equal("Here is your summary.", done.Result.Summary);
         Assert.Single(done.Result.Emails);
         Assert.Single(done.Result.Events);
+    }
+
+    [Fact]
+    public async Task BuildAsync_OnCacheHit_ReturnsCachedResponseWithoutCallingConnectorsOrLlm()
+    {
+        var gmail = new FakeGmailConnector();
+        var calendar = new FakeCalendarConnector();
+        var llm = new FakeLlmProvider("Should not be called.");
+        var cache = new FakeDailySummaryCache();
+        var userId = Guid.NewGuid();
+        var cachedDto = new DailySummaryResponseDto("Cached summary.", new List<EmailHighlightDto>(), new List<CalendarHighlightDto>(), DateTimeOffset.UtcNow);
+        await cache.SetAsync(userId, cachedDto);
+
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, cache, DefaultOptions());
+
+        var result = await service.BuildAsync(userId);
+
+        Assert.Equal("Cached summary.", result.Summary);
+        Assert.Empty(gmail.ReceivedUserIds);
+        Assert.Empty(calendar.ReceivedUserIds);
+        Assert.Empty(llm.ReceivedRequests);
+    }
+
+    [Fact]
+    public async Task BuildAsync_OnCacheMiss_PopulatesCacheAfterGenerating()
+    {
+        var gmail = new FakeGmailConnector();
+        var calendar = new FakeCalendarConnector();
+        var llm = new FakeLlmProvider("Freshly generated.");
+        var cache = new FakeDailySummaryCache();
+        var userId = Guid.NewGuid();
+
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, cache, DefaultOptions());
+
+        await service.BuildAsync(userId);
+
+        Assert.Equal(1, cache.SetCallCount);
+        var cached = await cache.GetAsync(userId);
+        Assert.Equal("Freshly generated.", cached!.Summary);
+    }
+
+    [Fact]
+    public async Task StreamAsync_OnCacheHit_YieldsOneChunkThenDone_WithoutStatusEventsOrLlmCall()
+    {
+        var gmail = new FakeGmailConnector();
+        var calendar = new FakeCalendarConnector();
+        var llm = new FakeLlmProvider("Should not be called.");
+        var cache = new FakeDailySummaryCache();
+        var userId = Guid.NewGuid();
+        var cachedDto = new DailySummaryResponseDto("Cached summary.", new List<EmailHighlightDto>(), new List<CalendarHighlightDto>(), DateTimeOffset.UtcNow);
+        await cache.SetAsync(userId, cachedDto);
+
+        var service = new LlmGateway.Assistant.DailySummary.DailySummaryService(gmail, calendar, llm, cache, DefaultOptions());
+
+        var received = new List<DailySummaryStreamEvent>();
+        await foreach (var streamEvent in service.StreamAsync(userId))
+        {
+            received.Add(streamEvent);
+        }
+
+        Assert.Equal(2, received.Count);
+        var chunk = Assert.IsType<DailySummaryStreamEvent.Chunk>(received[0]);
+        Assert.Equal("Cached summary.", chunk.Text);
+        Assert.IsType<DailySummaryStreamEvent.Done>(received[1]);
+        Assert.Empty(llm.ReceivedRequests);
     }
 }

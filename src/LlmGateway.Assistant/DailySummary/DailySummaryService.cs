@@ -22,22 +22,31 @@ public class DailySummaryService
     private readonly IGmailConnector _gmailConnector;
     private readonly ICalendarConnector _calendarConnector;
     private readonly ILlmProvider _llmProvider;
+    private readonly IDailySummaryCache _cache;
     private readonly DailySummaryOptions _options;
 
     public DailySummaryService(
         IGmailConnector gmailConnector,
         ICalendarConnector calendarConnector,
         ILlmProvider llmProvider,
+        IDailySummaryCache cache,
         IOptions<DailySummaryOptions> options)
     {
         _gmailConnector = gmailConnector;
         _calendarConnector = calendarConnector;
         _llmProvider = llmProvider;
+        _cache = cache;
         _options = options.Value;
     }
 
     public async Task<DailySummaryResponseDto> BuildAsync(Guid userId, CancellationToken cancellationToken = default)
     {
+        var cached = await _cache.GetAsync(userId, cancellationToken);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
         var emailsTask = _gmailConnector.SearchImportantMessagesAsync(userId, cancellationToken);
         var eventsTask = _calendarConnector.ListUpcomingEventsAsync(userId, _options.MaxCalendarEvents, cancellationToken);
         await Task.WhenAll(emailsTask, eventsTask);
@@ -57,11 +66,14 @@ public class DailySummaryService
 
         var response = await CompleteWithTimeoutAndRetryAsync(request, cancellationToken);
 
-        return new DailySummaryResponseDto(
+        var dto = new DailySummaryResponseDto(
             response.Content,
             emails.Select(e => new EmailHighlightDto(e.Category, e.Subject, e.From, e.Date)).ToList(),
             events.Select(e => new CalendarHighlightDto(e.Summary, e.Start, e.End)).ToList(),
             DateTimeOffset.UtcNow);
+
+        await _cache.SetAsync(userId, dto, cancellationToken);
+        return dto;
     }
 
     // Same data-fetch + prompt as BuildAsync, but streams the LLM's text deltas as they arrive
@@ -74,6 +86,14 @@ public class DailySummaryService
         Guid userId,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var cached = await _cache.GetAsync(userId, cancellationToken);
+        if (cached is not null)
+        {
+            yield return new DailySummaryStreamEvent.Chunk(cached.Summary);
+            yield return new DailySummaryStreamEvent.Done(cached);
+            yield break;
+        }
+
         yield return new DailySummaryStreamEvent.Status("Fetching your emails and calendar…");
 
         var emailsTask = _gmailConnector.SearchImportantMessagesAsync(userId, cancellationToken);
@@ -111,6 +131,7 @@ public class DailySummaryService
             events.Select(e => new CalendarHighlightDto(e.Summary, e.Start, e.End)).ToList(),
             DateTimeOffset.UtcNow);
 
+        await _cache.SetAsync(userId, dto, cancellationToken);
         yield return new DailySummaryStreamEvent.Done(dto);
     }
 

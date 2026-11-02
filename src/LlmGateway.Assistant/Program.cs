@@ -92,6 +92,19 @@ builder.Services.AddScoped<ChatOrchestrator>();
 
 // Daily summary (Gmail orders/bills/travel + Calendar -> single LLM summarization call).
 // Scoped: depends on the Scoped connectors above via CurrentUserContext/GoogleOAuthService.
+// IMemoryCache is a short-term fix for first-load latency (~10s Gmail+Calendar+Gemini) - it's
+// per-machine, not shared across Fly's instances, so hit rate is partial; a durable store behind
+// the same IDailySummaryCache interface is the real-world fix if that matters later.
+builder.Services.AddMemoryCache();
+var dailySummaryCacheEnabled = builder.Configuration.GetValue("DailySummary:CacheEnabled", true);
+if (dailySummaryCacheEnabled)
+{
+    builder.Services.AddSingleton<IDailySummaryCache, MemoryDailySummaryCache>();
+}
+else
+{
+    builder.Services.AddSingleton<IDailySummaryCache, NullDailySummaryCache>();
+}
 builder.Services.AddScoped<DailySummaryService>();
 
 var app = builder.Build();

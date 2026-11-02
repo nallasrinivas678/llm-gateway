@@ -7,4 +7,6 @@ public class DailySummaryOptions
     public int MaxCalendarEvents { get; set; } = 10;
     public int LlmTimeoutSeconds { get; set; } = 25;
     public int LlmMaxRetries { get; set; } = 1;
+    public bool CacheEnabled { get; set; } = true;
+    public int CacheTtlSeconds { get; set; } = 900;
 }
