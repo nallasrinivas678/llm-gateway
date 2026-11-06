@@ -1,4 +1,3 @@
-using System.Globalization;
 using LlmGateway.Assistant.Connectors;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -83,7 +82,7 @@ public class DocumentIngestService
                     insert.Parameters.AddWithValue(i);
                     insert.Parameters.AddWithValue(chunks[i].Page);
                     insert.Parameters.AddWithValue(chunks[i].Content);
-                    insert.Parameters.AddWithValue(ToVectorLiteral(vectors[i]));
+                    insert.Parameters.AddWithValue(UserDb.VectorLiteral(vectors[i]));
                     await insert.ExecuteNonQueryAsync();
                 }
 
@@ -167,10 +166,6 @@ public class DocumentIngestService
         command.Parameters.AddWithValue(documentId);
         await command.ExecuteNonQueryAsync();
     }
-
-    // pgvector's text format: [0.1,0.2,...]. Avoids needing an extra Npgsql plugin package.
-    private static string ToVectorLiteral(float[] values) =>
-        "[" + string.Join(",", values.Select(v => v.ToString("G9", CultureInfo.InvariantCulture))) + "]";
 
     private class IngestException : Exception
     {

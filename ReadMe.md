@@ -192,7 +192,7 @@ Lets a TaskTide user upload a PDF and ask questions answered **only from that do
 |---|---|---|
 | 1 | Database: pgvector, tables, RLS, private storage bucket, `match_chunks` | Done: applied to the Supabase project; isolation check passed |
 | 2 | Ingest endpoint `POST /assistant/docs` | Code written, builds, chunker unit-tested; not yet run end to end |
-| 3 | Ask endpoint `POST /assistant/docs/ask` | Planned |
+| 3 | Ask endpoint `POST /assistant/docs/ask` | Code written, builds, helpers unit-tested; not yet run end to end |
 | 4 | TaskTide UI (upload, status, chat with citations) | Planned |
 | 5 | Evals, tests, rate limits, hardening | Planned |
 
@@ -262,6 +262,7 @@ The UI never talks to the LLM or embedding provider. All AI calls go through the
 POST /assistant/docs        { "documentId": "<uuid>" }             -> 202 Accepted (ingest runs in background); 404 if not yours
 POST /assistant/docs/ask    { "documentId": "<uuid>", "question": "..." }
                             -> { "answer": "...", "sources": [ { "page": 3, "snippet": "..." } ] }
+                               404 not yours, 409 not ready, 400 bad question, 429 over 10 questions/minute
 ```
 
 Both require `Authorization: Bearer <Supabase JWT>`.

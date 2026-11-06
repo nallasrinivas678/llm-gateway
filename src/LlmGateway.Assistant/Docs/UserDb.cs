@@ -15,6 +15,10 @@ public class UserDb
         _dataSource = dataSource;
     }
 
+    // pgvector's text format: [0.1,0.2,...]. Avoids needing an extra Npgsql plugin package.
+    public static string VectorLiteral(float[] values) =>
+        "[" + string.Join(",", values.Select(v => v.ToString("G9", System.Globalization.CultureInfo.InvariantCulture))) + "]";
+
     public async Task<T> RunAsync<T>(Guid userId, Func<NpgsqlConnection, Task<T>> work, CancellationToken cancellationToken = default)
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);

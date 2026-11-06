@@ -109,6 +109,7 @@ public class GeminiProvider : ILlmProvider
     private static GeminiRequest BuildPayload(ChatRequest request) => new()
     {
         Contents = BuildContents(request.Messages),
+        GenerationConfig = request.Temperature is null ? null : new GeminiGenerationConfig { Temperature = request.Temperature },
         SystemInstruction = request.SystemPrompt is null
             ? null
             : new GeminiContent { Parts = new List<GeminiPart> { new() { Text = request.SystemPrompt } } },
@@ -185,6 +186,10 @@ public class GeminiProvider : ILlmProvider
         [JsonPropertyName("contents")]
         public List<GeminiContent> Contents { get; set; } = new();
 
+        [JsonPropertyName("generationConfig")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public GeminiGenerationConfig? GenerationConfig { get; set; }
+
         [JsonPropertyName("systemInstruction")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public GeminiContent? SystemInstruction { get; set; }
@@ -192,6 +197,12 @@ public class GeminiProvider : ILlmProvider
         [JsonPropertyName("tools")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public List<GeminiToolDeclaration>? Tools { get; set; }
+    }
+
+    private class GeminiGenerationConfig
+    {
+        [JsonPropertyName("temperature")]
+        public double? Temperature { get; set; }
     }
 
     private class GeminiContent

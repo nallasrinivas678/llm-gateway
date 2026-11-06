@@ -101,6 +101,8 @@ To verify end to end I need local settings for the Supabase connection string, U
 
 Done when: questions about the document return correct answers with page citations, and off-topic questions return the "not found" response.
 
+Status: code written (`Docs/DocumentAskService.cs`, `POST /assistant/docs/ask`); builds, 15 tests pass, and the endpoints return 401 without a token. Not yet run end to end. Choices: single JSON response (no SSE yet); similarity threshold `Docs:MinSimilarity` = 0.5 is a guess to tune on real documents; rate limit 10 questions per user per minute; `temperature` 0.2 (added to `ChatRequest` and both providers). Token usage is not logged because the providers don't expose it, and `doc_messages` is not written yet.
+
 ## Phase 4: TaskTide UI
 
 * [ ] Documents page: upload button, list with title and status chip (processing / ready / failed), delete action.
