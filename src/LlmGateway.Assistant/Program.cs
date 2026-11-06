@@ -2,6 +2,7 @@ using LlmGateway.Assistant;
 using LlmGateway.Assistant.Auth;
 using LlmGateway.Assistant.Connectors;
 using LlmGateway.Assistant.DailySummary;
+using LlmGateway.Assistant.Docs;
 using LlmGateway.Assistant.Endpoints;
 using LlmGateway.Assistant.Orchestrator;
 using LlmGateway.Assistant.Providers;
@@ -107,6 +108,15 @@ else
 }
 builder.Services.AddScoped<DailySummaryService>();
 
+// PDF Q&A ingest: embeddings via Gemini, document data via user-scoped (RLS-enforced) queries.
+builder.Services.AddHttpClient<GeminiEmbeddingClient>((sp, client) =>
+{
+    var options = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
+    client.BaseAddress = new Uri(options.Endpoint);
+});
+builder.Services.AddSingleton<UserDb>();
+builder.Services.AddHttpClient<DocumentIngestService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -121,6 +131,7 @@ app.UseAuthorization();
 
 app.MapChatEndpoints();
 app.MapDailySummaryEndpoints();
+app.MapDocsEndpoints();
 app.MapGoogleAuthEndpoints();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestampUtc = DateTimeOffset.UtcNow }));

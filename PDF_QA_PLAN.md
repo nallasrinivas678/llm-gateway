@@ -57,6 +57,39 @@ Status: done. Applied to the main Supabase project (branching needs the Pro plan
 
 Done when: a sample PDF ends up `ready` with sensible chunks, and a bad or empty PDF ends up `failed` with a readable error.
 
+Status: code written (`src/LlmGateway.Assistant/Docs/*`, `Endpoints/DocsController.cs`); builds and the chunker tests pass. Not yet run end to end: that needs `Supabase:ConnectionString`, `Supabase:Url`, `Supabase:AnonKey`, `Gemini:ApiKey` and a user JWT. Request body uses camelCase (`documentId`) like the other endpoints.
+
+## Phase 2: recommended approach
+
+Decisions (the plan's open items 1 and 2):
+
+* **Embeddings: Gemini `gemini-embedding-001`, requested at 1536 dimensions.** The Assistant already has a Gemini key and options (daily summary uses it), so this adds a method, not a vendor. Anthropic has no embeddings API, and OpenAI would need a new key and options. Verify the model name and that 1536 output dimensions is accepted on the first real call. If not, fall back to OpenAI `text-embedding-3-small` (native 1536).
+* **PDF parsing: PdfPig** (NuGet `PdfPig`, Apache 2.0, pure .NET, page-by-page text).
+* **Streaming** is a Phase 3 question; Phase 2 has no streaming.
+
+What the Assistant looks like today (so we follow it): minimal-API endpoint groups named `*Controller`, JWT via `SupabaseJwtValidator.GetUserId`, options bound from appsettings, providers called directly. Its DB access uses a service-role Npgsql connection that bypasses RLS, which the plan forbids for user data.
+
+Design (kept deliberately small):
+
+1. **User-scoped DB access.** One helper opens a connection, starts a transaction, runs `set local role authenticated` and sets `request.jwt.claims` to the verified user id, so RLS and `auth.uid()` apply. All Phase 2 queries use it.
+2. **Storage download** over HTTP with the caller's JWT (`GET {Supabase:Url}/storage/v1/object/documents/{path}`, headers `Authorization: Bearer <jwt>` and `apikey`). Needs two new settings: `Supabase:Url` and `Supabase:AnonKey`. Storage policies then enforce ownership, and the bucket already caps size at 20 MB.
+3. **Endpoint** `POST /assistant/docs {documentId}`: authenticate; select the document through the user-scoped connection (not found means 404, which doubles as the ownership check); start the work in the background (`Task.Run` with its own DI scope); return `202`.
+4. **Background job**, in order: set `processing`, clear `error`; download; extract text per page with PdfPig; reject over 200 pages; if total text is under about 200 characters, fail with "no text layer; OCR not supported yet"; chunk; embed in batches of 100 (one retry after a short delay); delete the document's existing chunks and insert the new ones in one transaction (this makes re-runs idempotent); set `ready` and `page_count`. Any exception sets `failed` with a short readable message.
+5. **Chunker:** per page, about 2,400 characters (about 600 tokens) with 300 characters of overlap, cutting at the last whitespace. A page shorter than the window is one chunk. No chunk crosses a page.
+
+Files to add (no new interfaces unless a test needs one):
+
+* `Docs/TextChunker.cs`, `Docs/GeminiEmbeddingClient.cs`, `Docs/DocumentIngestService.cs`, `Docs/UserDb.cs`
+* `Endpoints/DocsController.cs`, registered in `Program.cs`
+* `Docs:*` and `Supabase:Url` / `Supabase:AnonKey` entries in `appsettings.json`
+* `tests/LlmGateway.Assistant.Tests/Docs/TextChunkerTests.cs`
+
+Deliberately left out: queues or hosted services, Polly, OCR, per-user rate limits (Phase 3), progress reporting beyond `status`, and caching.
+
+Known trade-off: if the app restarts mid-ingest, the document stays `processing`. The UI can offer "retry", which re-calls the endpoint.
+
+To verify end to end I need local settings for the Supabase connection string, URL and anon key, a Gemini key, and a user JWT, plus a sample text PDF and a scanned or empty one.
+
 ## Phase 3: Ask endpoint (`POST /assistant/docs/ask`)
 
 * [ ] Input: `document_id`, `question`. Auth: user JWT. Confirm ownership and `status = ready`.

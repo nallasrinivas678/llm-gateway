@@ -191,7 +191,7 @@ Lets a TaskTide user upload a PDF and ask questions answered **only from that do
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Database: pgvector, tables, RLS, private storage bucket, `match_chunks` | Done: applied to the Supabase project; isolation check passed |
-| 2 | Ingest endpoint `POST /assistant/docs` | Planned |
+| 2 | Ingest endpoint `POST /assistant/docs` | Code written, builds, chunker unit-tested; not yet run end to end |
 | 3 | Ask endpoint `POST /assistant/docs/ask` | Planned |
 | 4 | TaskTide UI (upload, status, chat with citations) | Planned |
 | 5 | Evals, tests, rate limits, hardening | Planned |
@@ -259,8 +259,8 @@ The UI never talks to the LLM or embedding provider. All AI calls go through the
 **Planned API contract:**
 
 ```
-POST /assistant/docs        { "document_id": "<uuid>" }            -> 202 Accepted (ingest runs in background)
-POST /assistant/docs/ask    { "document_id": "<uuid>", "question": "..." }
+POST /assistant/docs        { "documentId": "<uuid>" }             -> 202 Accepted (ingest runs in background); 404 if not yours
+POST /assistant/docs/ask    { "documentId": "<uuid>", "question": "..." }
                             -> { "answer": "...", "sources": [ { "page": 3, "snippet": "..." } ] }
 ```
 
