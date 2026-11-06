@@ -30,6 +30,7 @@ public class AnthropicProvider : ILlmProvider
             Model = _options.Model,
             MaxTokens = _options.MaxTokens,
             System = request.SystemPrompt,
+            Temperature = request.Temperature,
             Messages = BuildMessages(request.Messages),
             Tools = request.Tools.Count == 0 ? null : request.Tools.ConvertAll(t => new AnthropicTool
             {
@@ -126,6 +127,10 @@ public class AnthropicProvider : ILlmProvider
 
         [JsonPropertyName("max_tokens")]
         public int MaxTokens { get; set; }
+
+        [JsonPropertyName("temperature")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? Temperature { get; set; }
 
         [JsonPropertyName("system")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

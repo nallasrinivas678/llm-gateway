@@ -2,10 +2,13 @@ using LlmGateway.Assistant;
 using LlmGateway.Assistant.Auth;
 using LlmGateway.Assistant.Connectors;
 using LlmGateway.Assistant.DailySummary;
+using LlmGateway.Assistant.Docs;
 using LlmGateway.Assistant.Endpoints;
 using LlmGateway.Assistant.Orchestrator;
 using LlmGateway.Assistant.Providers;
 using LlmGateway.Assistant.Tools;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -107,6 +110,27 @@ else
 }
 builder.Services.AddScoped<DailySummaryService>();
 
+// PDF Q&A ingest: embeddings via Gemini, document data via user-scoped (RLS-enforced) queries.
+builder.Services.AddHttpClient<GeminiEmbeddingClient>((sp, client) =>
+{
+    var options = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
+    client.BaseAddress = new Uri(options.Endpoint);
+});
+builder.Services.Configure<DocsOptions>(builder.Configuration.GetSection("Docs"));
+builder.Services.AddSingleton<UserDb>();
+builder.Services.AddScoped<DocumentAskService>();
+
+// Ask is the costly call (embedding + LLM), so cap it per user: 10 questions a minute.
+builder.Services.AddRateLimiter(limiter =>
+{
+    limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    limiter.AddPolicy(DocsController.AskRateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            SupabaseJwtValidator.GetUserId(httpContext.User)?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+});
+builder.Services.AddHttpClient<DocumentIngestService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -118,9 +142,11 @@ if (app.Environment.IsDevelopment())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapChatEndpoints();
 app.MapDailySummaryEndpoints();
+app.MapDocsEndpoints();
 app.MapGoogleAuthEndpoints();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestampUtc = DateTimeOffset.UtcNow }));

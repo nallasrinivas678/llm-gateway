@@ -7,4 +7,5 @@ public class ChatRequest
     public List<ChatMessage> Messages { get; set; } = new();
     public List<ToolSchema> Tools { get; set; } = new();
     public string? SystemPrompt { get; set; }
+    public double? Temperature { get; set; }
 }
