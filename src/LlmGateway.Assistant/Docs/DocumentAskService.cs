@@ -9,7 +9,7 @@ public class DocsOptions
 {
     // Chunks below this cosine similarity are treated as "not in the document". Tune against
     // real documents; the right value depends on the embedding model.
-    public double MinSimilarity { get; set; } = 0.5;
+    public double MinSimilarity { get; set; } = 0.55;
     public int TopK { get; set; } = 6;
 }
 
