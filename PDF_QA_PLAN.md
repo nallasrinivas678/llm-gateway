@@ -113,6 +113,43 @@ Status: code written (`Docs/DocumentAskService.cs`, `POST /assistant/docs/ask`);
 
 Done when: the full flow works end to end from the browser as a signed-in user.
 
+## Phase 4: recommended approach
+
+Target repo: `digital-garden` (the TaskTide web app: Vite + React 19, react-router, react-query, Supabase JS, Tailwind). Work on a new branch `srnalla-pdf-qa-ui` cut from `origin/main` (the local clone is on an older branch). The Expo app in `mobile/` is out of scope.
+
+What the app already gives us:
+
+* Supabase client in `src/lib/supabase.ts`; every Supabase read/write lives in `src/lib/hooks.ts` as react-query hooks, and components don't touch Supabase directly.
+* Gateway calls are separate, in `src/lib/dailySummary.ts`, using `VITE_ASSISTANT_API_URL` and `Authorization: Bearer <session.access_token>`. No new env vars are needed.
+* The Dashboard is one scrolling column of sections (`GardenList` is the closest pattern to copy: header, "+ New" button, card with a divider list). Modules can be hidden with `src/lib/featureFlags.ts`. `showToast` exists for errors.
+* There is no test runner. Verification is `npm run build` (tsc), `npm run lint`, and using the app.
+
+Design (kept small):
+
+1. **Where it lives.** A `DocumentList` section on the Dashboard (behind a new `pdfQa` flag) and one new route `/app/docs/:id` for the chat page. No new navigation.
+2. **Upload** (in `DocumentList`): check the file is a PDF and at most 20 MB before sending. Generate the id with `crypto.randomUUID()`, upload to Storage at `{user.id}/{id}.pdf`, insert the `documents` row (`title` = file name, `storage_path`), then call `POST /assistant/docs { documentId }`. If the insert fails, remove the uploaded file. Order is upload, insert, ingest, so a failed upload never leaves a row stuck in `processing`.
+3. **Status** by polling, not Realtime: `useDocuments()` refetches every 3 seconds while any document is `processing`, and stops otherwise. Realtime would need `documents` added to the publication (a database change); polling needs none.
+4. **List row:** title, status chip (`processing` / `ready` / `failed`; failed shows the `error` text), page count, and delete. A failed row gets a "Retry" button that calls the ingest endpoint again; this also covers a document stuck in `processing` after a gateway restart.
+5. **Delete:** remove the Storage file first (stop and toast if that fails), then delete the row (chunks and messages cascade).
+6. **Chat page** (`/app/docs/:id`): loads the document (404 or not ready shows a message), a message list kept in component state, an input, and a "Thinking..." state while waiting. Answers render with the existing `renderMarkdown`. Under each answer, list the sources as "Page N" plus the snippet. Chat history is not saved (the `doc_messages` table is unused for now). The endpoint is a single JSON response, so no streaming code is needed.
+7. **Errors:** 404 (document not found), 409 (not ready yet), 429 ("slow down, 10 questions a minute"), 502 and network failures each get a short message in the chat or a toast. Empty state on the list: "Upload a PDF to ask questions about it."
+
+Files to add or change in `digital-garden`:
+
+* `src/types/index.ts`: `Doc`, `DocStatus`, `AskSource`, `AskResult` types
+* `src/lib/hooks.ts`: `useDocuments`, `useDocument`, `useUploadDocument`, `useDeleteDocument`
+* `src/lib/docsApi.ts`: `ingestDocument(token, id)` and `askDocument(token, id, question)` (fetch wrappers, like `dailySummary.ts`)
+* `src/components/DocumentList.tsx`, `src/pages/DocumentChat.tsx`
+* `src/App.tsx` (route), `src/pages/Dashboard.tsx` (section), `src/lib/featureFlags.ts` (`pdfQa`, default `false` until verified end to end)
+
+Deliberately left out: Realtime, streaming, saved chat history, drag-and-drop, upload progress bars, a test framework, and the mobile app.
+
+How this lets us finish verification: run the gateway locally with its secrets (Supabase connection string, URL, anon key, JWT secret, Gemini key), set `VITE_ASSISTANT_API_URL` to it, sign in as a real user and use the UI. That exercises Phases 2 and 3 end to end with a real JWT, so I don't need one handed over. I can drive it in the browser pane, or you can.
+
+Needs from you: the gateway secrets above (in .NET user secrets, not in files), a sample text PDF, and a scanned or empty PDF. CORS needs no change: the gateway already allows any header and method, and `http://localhost:5173` by default.
+
+Order: gateway running locally, then upload and list, then chat page, then error states, then flip the flag.
+
 ## Phase 5: Hardening and POC polish
 
 * [ ] Small eval set: 10-15 questions with expected answers and source pages. Script that reports retrieval hit rate and answer correctness.
