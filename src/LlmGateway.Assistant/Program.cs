@@ -40,7 +40,11 @@ builder.Services.AddAuthorization();
 builder.Services.AddSingleton(sp =>
 {
     var options = sp.GetRequiredService<IOptions<SupabaseOptions>>().Value;
-    return NpgsqlDataSource.Create(options.ConnectionString);
+    // Supabase's pooler (Supavisor) runs in transaction mode; Npgsql's reset-on-close hangs on a
+    // reused connection there (a second transaction timed out after 30s). Skipping the reset is
+    // Npgsql's documented setting for PgBouncer-style poolers. Safe here: we only use SET LOCAL.
+    var connectionString = new NpgsqlConnectionStringBuilder(options.ConnectionString) { NoResetOnClose = true };
+    return NpgsqlDataSource.Create(connectionString);
 });
 builder.Services.AddScoped<ISupabaseDataService, SupabaseDataService>();
 
