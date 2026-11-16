@@ -69,6 +69,16 @@ describe("loadConfig", () => {
     expect(loadConfig({ SUPABASE_JWT_ISSUER: issuer, PORT: "" }).PORT).toBe(loadSettings().server.port);
   });
 
+  it("accepts a postgres URL for SUPABASE_DB_URL", () => {
+    const url = "postgresql://assistant_tokens.abcdefghijklmnopqrst:pw@aws-0-us-west-2.pooler.supabase.com:6543/postgres";
+    expect(loadConfig({ SUPABASE_JWT_ISSUER: issuer, SUPABASE_DB_URL: url }).SUPABASE_DB_URL).toBe(url);
+  });
+
+  it("rejects the .NET Key=Value connection string with a helpful message", () => {
+    const dotnet = "Host=aws-0-us-west-2.pooler.supabase.com;Port=6543;Username=u;Password=p;Database=postgres";
+    expect(() => loadConfig({ SUPABASE_JWT_ISSUER: issuer, SUPABASE_DB_URL: dotnet })).toThrow(/URL like postgresql/);
+  });
+
   it("rejects an invalid port", () => {
     expect(() => loadConfig({ SUPABASE_JWT_ISSUER: issuer, PORT: "abc" })).toThrow();
   });

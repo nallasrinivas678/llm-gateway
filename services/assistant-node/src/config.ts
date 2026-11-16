@@ -60,7 +60,14 @@ const envSchema = z.object({
   SUPABASE_JWT_ISSUER: z.string().url(),
   SUPABASE_JWT_SECRET: z.string().optional(),
   // Needed only by the Google token service (reading and refreshing each user's token).
-  SUPABASE_DB_URL: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  // node-postgres needs the URL form. The .NET gateway's `Host=...;Username=...` form does not work here.
+  SUPABASE_DB_URL: z.preprocess(
+    blankIsUnset,
+    z
+      .string()
+      .refine((v) => /^postgres(ql)?:\/\//.test(v), "SUPABASE_DB_URL must be a URL like postgresql://user:password@host:6543/postgres, not the .NET Key=Value form")
+      .optional(),
+  ),
   GOOGLE_CLIENT_ID: z.preprocess(blankIsUnset, z.string().min(1).optional()),
   GOOGLE_CLIENT_SECRET: z.preprocess(blankIsUnset, z.string().min(1).optional()),
 });

@@ -14,7 +14,17 @@ interface Row {
 export function createPgTokenStore(connectionString: string): TokenStore & { close(): Promise<void> } {
   // Supabase's pooler runs in transaction mode: no named prepared statements are used here, and
   // every call is a single statement, so nothing depends on session state.
-  const pool = new pg.Pool({ connectionString, max: 5, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 10_000 });
+  // TLS is always on: without it the pooler accepts a plain-text connection and tokens would cross
+  // the network unencrypted. Supabase's certificate chain is not in Node's trust store, so the
+  // certificate itself is not verified yet (encrypted, but open to an impersonating server).
+  // TODO before production: download Supabase's CA certificate and pass it as `ssl: { ca }`.
+  const pool = new pg.Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 5,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+  });
 
   return {
     async get(userId): Promise<StoredTokens | null> {
