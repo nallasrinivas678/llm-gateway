@@ -2,7 +2,7 @@
 
 The Node.js (TypeScript) version of the TaskTide Assistant backend. It is being built to replace the .NET service in `src/LlmGateway.Assistant`, one feature at a time.
 
-**Status: skeleton only.** Right now the service can start, answer `/health`, and check a user's login token. The three features below are not built yet.
+**Status: early.** The service starts, answers `/health`, checks a user's login token, and contains the first Google tool server (Calendar) with tests. It is not yet connected to a chat endpoint, and the three features below are not built.
 
 | Feature | Today's home (.NET) | Planned here |
 |---|---|---|
@@ -91,7 +91,12 @@ route handler     (only /assistant/whoami exists so far)
 | `src/app.ts` | Creates the app and registers routes. New endpoints go here. |
 | `src/auth.ts` | Login-token check. Mirrors the .NET `SupabaseJwtValidator`. |
 | `src/auth.test.ts` | Tests for the token check. Copy its style for new tests. |
-| `tsconfig.json` | TypeScript settings. |
+| `src/google-mcp/calendar.ts` | Plain functions that call the Google Calendar API. No MCP code here. |
+| `src/google-mcp/server.ts` | The MCP server that exposes `list_events` and `create_event` as tools. One is built per request with that user's Google token. |
+| `src/google-mcp/server.test.ts` | Tests that talk to the server like the agent will, using a fake Google. |
+| `tsconfig.json`, `tsconfig.build.json` | TypeScript settings. The build one leaves out test files. |
+| `Dockerfile`, `fly.toml` | Packaging and Fly.io settings. Written but not deployed or run yet. |
+| `.env.example` | Template for your `.env`. |
 
 ## How tokens are checked
 
@@ -117,6 +122,14 @@ Try it: `GET /assistant/whoami` with a valid token returns your user id.
 - **Users only see their own data.** Database calls must run with the signed-in user's token so RLS applies. Do not use a service-role key for user requests.
 - Treat email and document text as untrusted: it may contain instructions meant to trick the AI.
 
+## What is an MCP server here?
+
+An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
+
+- The user's Google token is handed to the server for one request only and is never shared between users.
+- Tool errors come back as short readable messages. Google's raw error text is not passed on.
+- Google calls live in `calendar.ts`, so they can be tested without MCP.
+
 ## Not done yet
 
-No Dockerfile or `fly.toml` (deployment), no database access, no AI calls, and no CI. These arrive in later phases of the plan.
+Gmail and Docs tools, reading and refreshing the user's Google token from Supabase, the chat agent and endpoint, daily summary, PDF Q&A, and CI. The Dockerfile and `fly.toml` have not been built or deployed (no Docker on the dev machine yet). These arrive in later phases of the plan.
