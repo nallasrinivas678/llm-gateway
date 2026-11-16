@@ -112,6 +112,8 @@ route handler     (only /assistant/whoami exists so far)
 | `src/google-mcp/calendar.ts`, `gmail.ts`, `docs.ts` | Plain functions that call the Google APIs. No MCP code here. |
 | `src/google-mcp/common.ts` | The shared Google request helper and the two error types. |
 | `src/google-mcp/server.ts` | The MCP server that exposes the six tools (`list_events`, `create_event`, `search_emails`, `create_draft`, `read_doc`, `append_to_doc`). One is built per request with that user's Google token. |
+| `src/google-tokens/tokenService.ts` | Gives the rest of the service a valid Google token for a user, refreshing it when it is about to expire. |
+| `src/google-tokens/pgTokenStore.ts` | Reads and updates the user's token row in Postgres (two queries, one table). |
 | `src/google-mcp/server.test.ts` | Tests that talk to the server like the agent will, using a fake Google. |
 | `tsconfig.json`, `tsconfig.build.json` | TypeScript settings. The build one leaves out test files. |
 | `Dockerfile`, `fly.toml` | Packaging and Fly.io settings. Written but not deployed or run yet. |

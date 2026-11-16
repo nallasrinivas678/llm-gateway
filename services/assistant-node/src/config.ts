@@ -17,7 +17,9 @@ export const settingsSchema = z.object({
       gmailMessages: httpsUrl,
       gmailDrafts: httpsUrl,
       docsDocuments: httpsUrl,
+      oauthToken: httpsUrl,
     }),
+    tokens: z.object({ refreshMarginSeconds: positiveInt }),
     limits: z.object({
       calendar: z
         .object({ defaultEvents: positiveInt, maxEvents: positiveInt, maxSummaryLength: positiveInt, maxDescriptionLength: positiveInt })
@@ -57,6 +59,10 @@ const envSchema = z.object({
   // Supabase JWT validation (same as SupabaseAuth:Issuer / SupabaseAuth:JwtSecret in .NET).
   SUPABASE_JWT_ISSUER: z.string().url(),
   SUPABASE_JWT_SECRET: z.string().optional(),
+  // Needed only by the Google token service (reading and refreshing each user's token).
+  SUPABASE_DB_URL: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  GOOGLE_CLIENT_ID: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  GOOGLE_CLIENT_SECRET: z.preprocess(blankIsUnset, z.string().min(1).optional()),
 });
 
 const splitList = (value?: string) => {
@@ -72,6 +78,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, settings: Setti
     CORS_ALLOWED_ORIGINS: splitList(parsed.CORS_ALLOWED_ORIGINS) ?? settings.cors.allowedOrigins,
     SUPABASE_JWT_ISSUER: parsed.SUPABASE_JWT_ISSUER,
     SUPABASE_JWT_SECRET: parsed.SUPABASE_JWT_SECRET,
+    SUPABASE_DB_URL: parsed.SUPABASE_DB_URL,
+    GOOGLE_CLIENT_ID: parsed.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: parsed.GOOGLE_CLIENT_SECRET,
     settings,
   };
 }
