@@ -1,0 +1,35 @@
+{
+  "server": {
+    "port": 8080
+  },
+  "cors": {
+    "allowedOrigins": ["http://localhost:5173"]
+  },
+  "google": {
+    "urls": {
+      "calendarEvents": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      "gmailMessages": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+      "gmailDrafts": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+      "docsDocuments": "https://docs.googleapis.com/v1/documents"
+    },
+    "limits": {
+      "calendar": {
+        "defaultEvents": 10,
+        "maxEvents": 25,
+        "maxSummaryLength": 200,
+        "maxDescriptionLength": 2000
+      },
+      "gmail": {
+        "defaultResults": 5,
+        "maxResults": 15,
+        "maxQueryLength": 500,
+        "maxSubjectLength": 200,
+        "maxBodyLength": 20000
+      },
+      "docs": {
+        "maxReadChars": 20000,
+        "maxAppendChars": 20000
+      }
+    }
+  }
+}

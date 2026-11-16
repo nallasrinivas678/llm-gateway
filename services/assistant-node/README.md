@@ -57,6 +57,23 @@ curl http://localhost:8080/health
 
 You should see `{"status":"healthy", ...}`.
 
+## Where settings live
+
+Two places, one rule:
+
+| Where | What goes there | Example |
+|---|---|---|
+| `config/default.json` (committed) | Anything that is not secret and is the same in every environment | Google API URLs, how many emails one search may return |
+| Environment variables (`.env` locally, Fly secrets in production) | Secrets, and anything that differs per environment | `SUPABASE_DB_URL`, `GOOGLE_CLIENT_SECRET`, `PORT`, `CORS_ALLOWED_ORIGINS` |
+
+If both set the same thing (`PORT`, `CORS_ALLOWED_ORIGINS`), the environment variable wins. A blank value such as `PORT=` counts as not set.
+
+The file is checked when the service starts: a URL that is not `https`, a zero or negative limit, or a default bigger than its maximum stops startup with a clear error. After changing `config/default.json`, restart the service.
+
+Stays in code on purpose: safety rules (which characters a Google Doc id may have, rejecting line breaks in email headers), fixed parts of Google's API requests, error wording, and the MCP server name.
+
+**Rule for new code:** do not type a URL or a limit into a source file. Add it to `config/default.json` and to the schema in `src/config.ts`, then read it from the settings.
+
 ## Commands
 
 | Command | What it does |
@@ -87,7 +104,8 @@ route handler     (only /assistant/whoami exists so far)
 | File | Purpose |
 |---|---|
 | `src/index.ts` | Entry point. Reads settings and starts the server. |
-| `src/config.ts` | Reads and checks environment variables. Add new settings here. |
+| `src/config.ts` | Reads `config/default.json` and the environment variables, checks both, and stops the service at startup if anything is wrong. Add new settings here. |
+| `config/default.json` | Settings that are the same everywhere: Google API URLs, size limits, default port and allowed websites. No secrets. |
 | `src/app.ts` | Creates the app and registers routes. New endpoints go here. |
 | `src/auth.ts` | Login-token check. Mirrors the .NET `SupabaseJwtValidator`. |
 | `src/auth.test.ts` | Tests for the token check. Copy its style for new tests. |

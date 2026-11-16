@@ -1,14 +1,12 @@
 // Google Calendar REST calls. Port of the working parts of the .NET CalendarConnector
 // (primary calendar only).
-import { googleRequest, type FetchFn } from "./common.js";
+import { googleRequest, type GoogleContext } from "./common.js";
 
 export interface CalendarEvent {
   summary: string;
   start: string;
   end: string;
 }
-
-const EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
 interface GoogleEvent {
   summary?: string;
@@ -25,28 +23,22 @@ function toCalendarEvent(event: GoogleEvent): CalendarEvent {
   };
 }
 
-export async function listEvents(
-  accessToken: string,
-  maxResults: number,
-  fetchFn: FetchFn,
-  now: Date = new Date(),
-): Promise<CalendarEvent[]> {
+export async function listEvents(ctx: GoogleContext, maxResults: number, now: Date = new Date()): Promise<CalendarEvent[]> {
   const query = new URLSearchParams({
     timeMin: now.toISOString(),
     maxResults: String(maxResults),
     singleEvents: "true",
     orderBy: "startTime",
   });
-  const body = await googleRequest<{ items?: GoogleEvent[] }>("Calendar", fetchFn, `${EVENTS_URL}?${query}`, accessToken);
+  const body = await googleRequest<{ items?: GoogleEvent[] }>("Calendar", ctx, `${ctx.settings.urls.calendarEvents}?${query}`);
   return (body.items ?? []).map(toCalendarEvent);
 }
 
 export async function createEvent(
-  accessToken: string,
+  ctx: GoogleContext,
   input: { summary: string; start: string; end: string; description?: string },
-  fetchFn: FetchFn,
 ): Promise<CalendarEvent> {
-  const created = await googleRequest<GoogleEvent>("Calendar", fetchFn, EVENTS_URL, accessToken, {
+  const created = await googleRequest<GoogleEvent>("Calendar", ctx, ctx.settings.urls.calendarEvents, {
     method: "POST",
     body: {
       summary: input.summary,

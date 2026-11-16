@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import { loadSettings } from "../config.js";
 import type { FetchFn } from "./common.js";
 import { createGoogleMcpServer } from "./server.js";
 
@@ -261,5 +262,56 @@ describe("docs tools", () => {
 
     expect(result.isError).toBe(true);
     expect(google.calls).toHaveLength(0);
+  });
+});
+
+describe("settings are used, not hardcoded", () => {
+  const custom = () => {
+    const settings = structuredClone(loadSettings().google);
+    settings.urls.calendarEvents = "https://calendar.test.example/events";
+    settings.urls.docsDocuments = "https://docs.test.example/documents";
+    settings.limits.calendar.maxEvents = 3;
+    settings.limits.calendar.defaultEvents = 2;
+    settings.limits.docs.maxReadChars = 5;
+    return settings;
+  };
+
+  async function connectWith(settings: ReturnType<typeof custom>, fetchFn: FetchFn) {
+    const server = createGoogleMcpServer("t", { fetch: fetchFn, settings });
+    const client = new Client({ name: "test", version: "0" });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+    return client;
+  }
+
+  it("calls the configured URL and uses the configured default", async () => {
+    const google = single({ items: [] });
+    const client = await connectWith(custom(), google.fetchFn);
+
+    await client.callTool({ name: "list_events", arguments: {} });
+
+    expect(google.calls[0]?.url.startsWith("https://calendar.test.example/events?")).toBe(true);
+    expect(google.calls[0]?.url).toContain("maxResults=2");
+  });
+
+  it("enforces the configured maximum", async () => {
+    const google = single({ items: [] });
+    const client = await connectWith(custom(), google.fetchFn);
+
+    const result = await client.callTool({ name: "list_events", arguments: { maxResults: 4 } }).catch(() => ({ isError: true }));
+
+    expect(result.isError).toBe(true);
+    expect(google.calls).toHaveLength(0);
+  });
+
+  it("truncates documents at the configured length", async () => {
+    const documentId = "1AbCdEfGhIjKlMnOpQrStUvWxYz";
+    const google = single({ title: "T", body: { content: [{ paragraph: { elements: [{ textRun: { content: "abcdefghij" } }] } }] } });
+    const client = await connectWith(custom(), google.fetchFn);
+
+    const result = JSON.parse(firstText(await client.callTool({ name: "read_doc", arguments: { documentId } })));
+
+    expect(google.calls[0]?.url).toBe(`https://docs.test.example/documents/${documentId}`);
+    expect(result).toEqual({ title: "T", text: "abcde", truncated: true });
   });
 });
