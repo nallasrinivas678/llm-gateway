@@ -1,18 +1,11 @@
-// Google Calendar REST calls, kept free of MCP so they are easy to test and reuse.
-// Port of the working parts of the .NET CalendarConnector (primary calendar only).
-
-export type FetchFn = typeof fetch;
+// Google Calendar REST calls. Port of the working parts of the .NET CalendarConnector
+// (primary calendar only).
+import { googleRequest, type FetchFn } from "./common.js";
 
 export interface CalendarEvent {
   summary: string;
   start: string;
   end: string;
-}
-
-export class GoogleApiError extends Error {
-  constructor(readonly status: number) {
-    super(`Google API request failed with status ${status}`);
-  }
 }
 
 const EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -44,12 +37,7 @@ export async function listEvents(
     singleEvents: "true",
     orderBy: "startTime",
   });
-  const response = await fetchFn(`${EVENTS_URL}?${query}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!response.ok) throw new GoogleApiError(response.status);
-
-  const body = (await response.json()) as { items?: GoogleEvent[] };
+  const body = await googleRequest<{ items?: GoogleEvent[] }>("Calendar", fetchFn, `${EVENTS_URL}?${query}`, accessToken);
   return (body.items ?? []).map(toCalendarEvent);
 }
 
@@ -58,17 +46,14 @@ export async function createEvent(
   input: { summary: string; start: string; end: string; description?: string },
   fetchFn: FetchFn,
 ): Promise<CalendarEvent> {
-  const response = await fetchFn(EVENTS_URL, {
+  const created = await googleRequest<GoogleEvent>("Calendar", fetchFn, EVENTS_URL, accessToken, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       summary: input.summary,
       description: input.description,
       start: { dateTime: input.start },
       end: { dateTime: input.end },
-    }),
+    },
   });
-  if (!response.ok) throw new GoogleApiError(response.status);
-
-  return toCalendarEvent((await response.json()) as GoogleEvent);
+  return toCalendarEvent(created);
 }
