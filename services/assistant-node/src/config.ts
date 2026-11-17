@@ -10,6 +10,13 @@ const positiveInt = z.number().int().positive();
 
 export const settingsSchema = z.object({
   server: z.object({ port: positiveInt }),
+  chat: z.object({
+    model: z.string().min(1),
+    temperature: z.number().min(0).max(2),
+    // How many times the model may call tools in one turn (the .NET service allowed 5).
+    maxToolRounds: positiveInt,
+    maxMessageLength: positiveInt,
+  }),
   cors: z.object({ allowedOrigins: z.array(z.string().url()).min(1) }),
   google: z.object({
     urls: z.object({
@@ -59,6 +66,11 @@ const envSchema = z.object({
   // Supabase JWT validation (same as SupabaseAuth:Issuer / SupabaseAuth:JwtSecret in .NET).
   SUPABASE_JWT_ISSUER: z.string().url(),
   SUPABASE_JWT_SECRET: z.string().optional(),
+  // Chat: the user's own token talks to Supabase (row-level security applies), so only the public
+  // project URL and public anon/publishable key are needed. The URL defaults to the JWT issuer's host.
+  SUPABASE_URL: z.preprocess(blankIsUnset, z.string().url().optional()),
+  SUPABASE_ANON_KEY: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  GOOGLE_API_KEY: z.preprocess(blankIsUnset, z.string().min(1).optional()),
   // Needed only by the Google token service (reading and refreshing each user's token).
   // node-postgres needs the URL form. The .NET gateway's `Host=...;Username=...` form does not work here.
   SUPABASE_DB_URL: z.preprocess(
@@ -85,6 +97,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, settings: Setti
     CORS_ALLOWED_ORIGINS: splitList(parsed.CORS_ALLOWED_ORIGINS) ?? settings.cors.allowedOrigins,
     SUPABASE_JWT_ISSUER: parsed.SUPABASE_JWT_ISSUER,
     SUPABASE_JWT_SECRET: parsed.SUPABASE_JWT_SECRET,
+    SUPABASE_URL: parsed.SUPABASE_URL ?? parsed.SUPABASE_JWT_ISSUER.replace(/\/auth\/v1\/?$/, ""),
+    SUPABASE_ANON_KEY: parsed.SUPABASE_ANON_KEY,
+    GOOGLE_API_KEY: parsed.GOOGLE_API_KEY,
     SUPABASE_DB_URL: parsed.SUPABASE_DB_URL,
     GOOGLE_CLIENT_ID: parsed.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: parsed.GOOGLE_CLIENT_SECRET,

@@ -37,5 +37,11 @@
     "tokens": {
       "refreshMarginSeconds": 60
     }
+  },
+  "chat": {
+    "model": "gemini-2.5-flash",
+    "temperature": 0.2,
+    "maxToolRounds": 5,
+    "maxMessageLength": 4000
   }
 }

@@ -29,7 +29,7 @@ The alternative — scoping the cache per caller — would mean two services ask
 
 ## Assistant service on Node (`services/assistant-node`)
 
-> **Status: work in progress.** The login check, the Google tools, the Google token service and the settings loader are built and tested. The chat agent, the daily summary and PDF Q&A are not built yet. The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
+> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader and the chat endpoint (`POST /assistant/chat`) are built and tested. The daily summary and PDF Q&A are not built yet. The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
 
 ### Why move it
 
@@ -43,18 +43,18 @@ flowchart LR
 
     subgraph A["assistant-node (Fly.io)"]
         J["Token check<br/>(jose, JWKS)"] --> T["Google token service<br/>(read + refresh)"]
-        J --> AG["Agent<br/>(LangGraph, planned)"]
+        J --> AG["Chat agent<br/>(LangChain, Gemini)"]
         T --> M["Google tool server<br/>(MCP, one per request)"]
         AG --> M
     end
 
     T -->|"select / update only"| S[("Supabase Postgres<br/>google_tokens")]
     M -->|"user's own Google token"| G["Google APIs<br/>Calendar, Gmail, Docs"]
-    AG -.->|"planned"| L["Gemini<br/>gemini-2.5-flash"]
-    AG -.->|"planned, as the user (RLS)"| C[("conversations,<br/>messages")]
+    AG --> L["Gemini<br/>gemini-2.5-flash"]
+    AG -->|"as the user (RLS)"| C[("conversations,<br/>messages")]
 ```
 
-Solid lines exist today. Dotted lines are planned.
+All lines exist today for chat. Daily summary and PDF Q&A are not drawn because they are not built.
 
 ### Components
 
@@ -64,7 +64,8 @@ Solid lines exist today. Dotted lines are planned.
 | Settings: `config/default.json` (URLs, limits) plus environment variables (secrets), checked at startup | `src/config.ts` | built, tested |
 | Google tool server: six tools, one server built per request | `src/google-mcp/` | built, tested (read paths also live) |
 | Google token service and Postgres store | `src/google-tokens/` | built, tested (live) |
-| Chat agent, conversation storage | not started | planned |
+| Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt | `src/chat/` | built, tested; checked live with Gemini and Google (saving to Supabase checked only against a fake database and the database's rules) |
+| Chat endpoint and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
 | Daily summary, PDF Q&A | not started | planned |
 
 ### Google tools (MCP)
@@ -80,6 +81,14 @@ The tool server lives in `src/google-mcp/`. For every request a fresh server is 
 
 Safeguards: Google's error text is never passed to the model, line breaks in the address or subject are refused (blocks hidden recipients), Google Doc ids are restricted to the characters Google uses, and tool descriptions tell the model that email and document text is data, not instructions.
 
+### How a chat request flows
+
+1. The browser sends `POST /assistant/chat` with the user's Supabase login token. The token is checked and the user id is taken from it.
+2. Conversations are read and written with a Supabase client that carries the **user's own token**, so the database's row-level security decides what that user may see. The service holds no powerful database key for this. A `conversationId` that belongs to someone else looks exactly like one that does not exist (404).
+3. The Google token service supplies the user's Google token, and a fresh Google tool server is connected to the agent in memory (no network hop). If the user has not connected Google, the chat continues without those tools and the model is told.
+4. The agent (LangChain `createAgent` with `gemini-2.5-flash`) answers, calling tools as needed, up to 5 tool rounds. Going over that gives a polite "couldn't finish" reply, not an error.
+5. All new messages of the turn are saved in one insert. Messages are stored in the same format the .NET service uses, so a conversation can be continued by either service.
+
 ### How a user's Google token is handled
 
 1. The Google connect flow (first sign-in with Google) still runs in .NET. It stores the token in `google_tokens`.
@@ -92,6 +101,8 @@ Safeguards: Google's error text is never passed to the model, line breaks in the
 | Decision | Reason |
 |---|---|
 | Our own Google tool server instead of Google's hosted MCP servers | Google's hosted servers are in Developer Preview and need a company-domain account. They also cannot send mail and have no append tool. |
+| Conversations stored as the signed-in user (row-level security), not with a server key | No powerful secret for chat data; the database enforces ownership. The security rules were checked in a test that rolls back. |
+| Google tools connected to the agent in memory, with our own small MCP-to-LangChain converter | `@langchain/mcp-adapters`' `loadMcpTools` (v2.0.3) needs a newer MCP client than the SDK we install and fails at runtime. We only need `listTools` and `callTool`, so ~25 lines of our own are simpler and tested. |
 | Draft-only email | Matches the existing "never auto-submit" rule; a model error cannot send a message |
 | Narrow database login for tokens | If the connection string leaks, only Google tokens are exposed, not the whole database |
 | `config/default.json` for URLs and limits, environment for secrets | No URLs or tunable numbers in code; secrets never in git |

@@ -2,11 +2,11 @@
 
 The Node.js (TypeScript) version of the TaskTide Assistant backend. It is being built to replace the .NET service in `src/LlmGateway.Assistant`, one feature at a time.
 
-**Status: early.** The service starts, answers `/health`, checks a user's login token, and contains a Google tool server (Calendar, Gmail and Docs tools) with tests. It is not yet connected to a chat endpoint, and the three features below are not built.
+**Status: chat works; the other two features are not built.** The service starts, checks a user's login token, serves `POST /assistant/chat` (a Gemini agent that can use the Google tools and remembers the conversation), and has tests for all of it. Daily summary and PDF Q&A are still to come.
 
 | Feature | Today's home (.NET) | Planned here |
 |---|---|---|
-| Chat with tools (calendar, email, docs, tasks) | `POST /assistant/chat` | Phase 2-3 |
+| Chat with tools (calendar, email drafts, docs) | `POST /assistant/chat` | built (tasks and web search still to come) |
 | Daily summary | `GET /assistant/daily-summary` | Phase 4 |
 | PDF question answering | `POST /assistant/docs`, `/assistant/docs/ask` | Phase 5 |
 
@@ -42,6 +42,13 @@ Create a file named `.env` in this folder (it is git-ignored, never commit it) w
 | `SUPABASE_JWT_SECRET` | no | Fallback key for tokens signed with a shared secret. |
 | `CORS_ALLOWED_ORIGINS` | no | Websites allowed to call this service, separated by commas. Default `http://localhost:5173`. |
 | `PORT` | no | Default `8080`. |
+| `SUPABASE_ANON_KEY` | for chat | The project's public (publishable) key. Safe to share; the web app ships the same one. |
+| `SUPABASE_URL` | no | Defaults to the host of `SUPABASE_JWT_ISSUER`. |
+| `SUPABASE_DB_URL` | for chat | Database login for reading Google tokens (the narrow `assistant_tokens` role, URL form). See `.env.example`. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | for chat | Same Google OAuth client the .NET gateway uses; needed to refresh tokens. |
+| `GOOGLE_API_KEY` | for chat | Gemini key. |
+
+If a setting needed for chat is missing, the service still starts, logs which ones, and answers `503` on the chat endpoint.
 
 Node does not read `.env` by itself in our scripts, so load it when you start:
 
@@ -109,6 +116,12 @@ route handler     (only /assistant/whoami exists so far)
 | `src/app.ts` | Creates the app and registers routes. New endpoints go here. |
 | `src/auth.ts` | Login-token check. Mirrors the .NET `SupabaseJwtValidator`. |
 | `src/auth.test.ts` | Tests for the token check. Copy its style for new tests. |
+| `src/chat/chatService.ts` | One chat turn: load the conversation, connect the Google tools, run the agent, save the new messages. |
+| `src/chat/conversationStore.ts` | Saves and loads conversations as the signed-in user, so the database's row rules decide who sees what. |
+| `src/chat/messageMapper.ts` | Converts between stored message rows and LangChain messages (same format the .NET service writes). |
+| `src/chat/mcpTools.ts` | Turns the Google MCP tools into tools the agent can call. |
+| `src/chat/systemPrompt.ts` | The instructions the model gets on every request. |
+| `src/wiring.ts` | Builds the real chat service from the settings at startup. |
 | `src/google-mcp/calendar.ts`, `gmail.ts`, `docs.ts` | Plain functions that call the Google APIs. No MCP code here. |
 | `src/google-mcp/common.ts` | The shared Google request helper and the two error types. |
 | `src/google-mcp/server.ts` | The MCP server that exposes the six tools (`list_events`, `create_event`, `search_emails`, `create_draft`, `read_doc`, `append_to_doc`). One is built per request with that user's Google token. |
@@ -144,6 +157,30 @@ Try it: `GET /assistant/whoami` with a valid token returns your user id.
 - **Users only see their own data.** Database calls must run with the signed-in user's token so RLS applies. Do not use a service-role key for user requests.
 - Treat email and document text as untrusted: it may contain instructions meant to trick the AI.
 
+## The chat endpoint
+
+`POST /assistant/chat` (needs the `Authorization: Bearer <Supabase login token>` header). Same request and response as the .NET service:
+
+```json
+{ "conversationId": "optional uuid, leave out to start a new conversation", "message": "What is on my calendar tomorrow?" }
+```
+
+```json
+{ "conversationId": "uuid", "reply": "You have ...", "toolCallsExecuted": ["list_events"] }
+```
+
+What happens on each request:
+
+1. The login token is checked (`src/auth.ts`). The user's own token is then used to talk to Supabase, so the database refuses anything that is not theirs. Another user's `conversationId` gives `404`.
+2. Earlier messages of the conversation are loaded.
+3. The user's Google token is fetched (and refreshed if needed) and the Google tools are connected. If Google is not connected, the chat still works but the model is told it has no calendar, email or document tools.
+4. The agent (Gemini, see `config/default.json` > `chat`) answers, calling tools as needed, up to 5 tool rounds. If it keeps going, the user gets a polite "I couldn't finish that" reply instead of an error.
+5. The new messages are saved in one database insert, and the reply is returned.
+
+Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which).
+
+Tool names changed from .NET (for example `list_events` instead of `list_upcoming_calendar_events`), so `toolCallsExecuted` shows the new names.
+
 ## What is an MCP server here?
 
 An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
@@ -166,4 +203,4 @@ It prints only the key names, asks you to confirm, and by default stages the sec
 
 ## Not done yet
 
-Reading and refreshing the user's Google token from Supabase, the chat agent and endpoint, daily summary, PDF Q&A, and CI. The Dockerfile and `fly.toml` have not been built or deployed (no Docker on the dev machine yet). These arrive in later phases of the plan.
+Task and web search tools, approval before the assistant changes anything, daily summary, PDF Q&A, and CI. Saving conversations has been tested against a fake database, and the database's security rules were checked separately, but not yet end to end with a real signed-in user. The Dockerfile and `fly.toml` have not been built or deployed (no Docker on the dev machine yet). See `CHECKLIST.md`.
