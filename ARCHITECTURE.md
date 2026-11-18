@@ -92,7 +92,7 @@ Safeguards: Google's error text is never passed to the model, line breaks in the
 
 ### How a user's Google token is handled
 
-1. The Google connect flow (first sign-in with Google) still runs in .NET. It stores the token in `google_tokens`.
+1. The Google connect flow (first sign-in with Google) is built in `src/google-oauth`: `GET /auth/google/start` gives the browser a consent URL with a signed, expiring `state`; Google sends the browser to a page of the web app; the page posts the code to `POST /auth/google/exchange` with the user's login token; the service saves the tokens in `google_tokens` only if that user is the one the `state` was issued to. The .NET flow still works and stays until the web app is switched over.
 2. Per request, the token service reads the row. If the token has more than 60 seconds left it is used as is. Otherwise it is refreshed with Google and saved. Simultaneous requests for one user share a single refresh.
 3. If the user never connected, or Google says access was revoked, the user gets a "please reconnect" message.
 4. The service reads the table through a dedicated database login, `assistant_tokens`, created by `supabase/migrations/20261116000000_google_tokens_server_only.sql`. That login can only select and update `google_tokens`; it is refused for every other table and for delete and insert. The same migration removed the old rule that let a signed-in browser read its own refresh token.
@@ -106,6 +106,7 @@ Safeguards: Google's error text is never passed to the model, line breaks in the
 | Google tools connected to the agent in memory, with our own small MCP-to-LangChain converter | `@langchain/mcp-adapters`' `loadMcpTools` (v2.0.3) needs a newer MCP client than the SDK we install and fails at runtime. We only need `listTools` and `callTool`, so ~25 lines of our own are simpler and tested. |
 | No Terraform for now | One Fly app is fully described by `fly.toml`, secrets are set by a script, and the database changes are SQL migrations in `supabase/`. Terraform would add state to store and protect for no gain. Revisit when there is a second environment (staging), more than one Fly app or volume, DNS, or Supabase project settings that should be reviewed as code. |
 | GitHub Actions for CI and deploy | The code is on GitHub already. CI checks every pull request; deploy is a separate workflow that is switched on by a repository variable, and builds on Fly's builders (`flyctl deploy --remote-only`). |
+| Connect Google: signed `state`, code posted back by the web app with the user's login token, scopes `gmail.compose` instead of `gmail.send` | The .NET `state` was a forgeable user id. Without the login-token check, a victim could be tricked into saving their Google access under an attacker's account. Drafts need `gmail.compose`; the service never sends mail. |
 | Draft-only email | Matches the existing "never auto-submit" rule; a model error cannot send a message |
 | Narrow database login for tokens | If the connection string leaks, only Google tokens are exposed, not the whole database |
 | `config/default.json` for URLs and limits, environment for secrets | No URLs or tunable numbers in code; secrets never in git |

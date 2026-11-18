@@ -47,6 +47,7 @@ Create a file named `.env` in this folder (it is git-ignored, never commit it) w
 | `SUPABASE_DB_URL` | for chat | Database login for reading Google tokens (the narrow `assistant_tokens` role, URL form). See `.env.example`. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | for chat | Same Google OAuth client the .NET gateway uses; needed to refresh tokens. |
 | `GOOGLE_API_KEY` | for chat | Gemini key. |
+| `GOOGLE_REDIRECT_URI` | for Connect Google | A page of the web app Google sends the browser back to, e.g. `https://tasktide.app/app/google/callback`. Must also be listed under "Authorized redirect URIs" for the OAuth client in the Google Cloud console. |
 
 If a setting needed for chat is missing, the service still starts, logs which ones, and answers `503` on the chat endpoint.
 
@@ -192,6 +193,21 @@ Both need the same `Authorization: Bearer <Supabase login token>` header and giv
 How it works (`src/dailySummary/dailySummaryService.ts`): it is not an agent. Fixed code runs the three Gmail searches (orders, bills, travel; the queries are in `config/default.json` > `dailySummary`) and the Calendar read at the same time, then makes one Gemini call that writes the briefing. Email text is flattened to one line each and the prompt says it is data, not instructions. The result is cached for 15 minutes per user, in memory, so run one machine. The JSON endpoint gives the model 25 seconds and one retry; the streaming one has no retry, because text may already have reached the browser.
 
 Errors: `401` no or bad login token, `502` with `{detail}` (for example "Google account is not connected"; other failures give a generic message and the details only go to the server log), `503` when the needed secrets are missing. Chat does not need to be configured for the summary to work: the summary needs everything chat needs except `SUPABASE_ANON_KEY`.
+
+## Connecting a Google account
+
+The first-time "Connect Google" sign-in, ported from the .NET service. Needs the login token header and `GOOGLE_REDIRECT_URI`.
+
+- `GET /auth/google/start` returns `{ authorizationUrl }`. The web app sends the browser there.
+- Google asks the user for access, then sends the browser to `GOOGLE_REDIRECT_URI` (a page of the web app) with `code` and `state` in the address.
+- `POST /auth/google/exchange` with `{ code, state }` (and the login token) swaps the code for tokens and saves them in `google_tokens`. It answers `{ connected: true }`, `400` for a bad or expired `state`, `502` with a readable `detail` when Google refuses, `503` when not configured.
+
+Differences from .NET, on purpose:
+
+- `state` is a signed token that expires after 10 minutes (the .NET one was the raw user id and could be forged).
+- The code is posted by the web app with the user's own login token, and the tokens are saved only if that user is the one the `state` was issued to. Without that check, an attacker could trick a victim into finishing the attacker's sign-in and receive the victim's Google access.
+- It asks for `calendar`, `gmail.readonly`, `gmail.compose` and `documents` (in `config/default.json`). `gmail.compose` is what creating a draft needs; `gmail.send` alone cannot create one, and nothing here sends mail. **A user who connected through .NET has `gmail.send` but not `gmail.compose`, so draft creation fails for them until they reconnect.**
+- Saving a first connection needs the database login to be able to insert, which is `supabase/migrations/20261118000000_assistant_tokens_insert.sql` (it still cannot delete).
 
 ## What is an MCP server here?
 

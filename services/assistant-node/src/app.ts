@@ -6,6 +6,7 @@ import { createAuth, type AuthEnv } from "./auth.js";
 import { ConversationNotFoundError } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
+import { GoogleConnectError, InvalidStateError } from "./google-oauth/connectService.js";
 import type { Services } from "./wiring.js";
 
 export function createApp(config: Config, services: Services = {}) {
@@ -83,6 +84,36 @@ export function createApp(config: Config, services: Services = {}) {
     });
   });
 
+  // Connect Google: same paths as the .NET service. /start gives the browser a Google consent
+  // URL; /exchange receives the code the web app got back and saves the tokens.
+  const googleAuth = new Hono<AuthEnv>();
+  googleAuth.use("*", createAuth(config));
+
+  googleAuth.get("/start", async (c) => {
+    if (!services.googleConnect) return c.json({ detail: "Connecting Google is not configured on this server." }, 503);
+    return c.json({ authorizationUrl: await services.googleConnect.buildAuthorizationUrl(c.get("userId")) });
+  });
+
+  const exchangeBody = z.object({ code: z.string().min(1).max(2000), state: z.string().min(1).max(4000) });
+
+  googleAuth.post("/exchange", async (c) => {
+    if (!services.googleConnect) return c.json({ detail: "Connecting Google is not configured on this server." }, 503);
+
+    const parsed = exchangeBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ detail: "Invalid request." }, 400);
+
+    try {
+      await services.googleConnect.complete(c.get("userId"), parsed.data.code, parsed.data.state);
+      return c.json({ connected: true });
+    } catch (error) {
+      if (error instanceof InvalidStateError) return c.json({ detail: error.message }, 400);
+      if (error instanceof GoogleConnectError) return c.json({ detail: error.message }, 502);
+      console.error("google connect failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+      return c.json({ detail: "Could not connect your Google account." }, 502);
+    }
+  });
+
+  app.route("/auth/google", googleAuth);
   app.route("/assistant", assistant);
 
   return app;
