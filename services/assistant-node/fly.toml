@@ -1,7 +1,6 @@
-# Fly.io config for assistant-node. Not deployed yet.
-# Create the app once with:  fly launch --no-deploy --copy-config --config fly.toml
-# (Fly app names are global, so pick a unique name when prompted and update `app` below.)
-app = 'assistant-node'
+# Fly.io config for assistant-node (deployed as the Fly app `assistant-service`).
+# Deploy with:  fly deploy --remote-only --config fly.toml   (run from services/assistant-node)
+app = 'assistant-service'
 primary_region = 'iad'
 
 [build]
@@ -15,9 +14,11 @@ primary_region = 'iad'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  # Keep one machine running once PDF ingest runs in the background here (Phase 6),
-  # otherwise Fly can stop the machine in the middle of an ingest.
-  min_machines_running = 0
+  # One machine always running: the daily summary cache lives in memory per machine, so a stopped
+  # or second machine means cache misses and cold starts. It also keeps Fly from stopping the
+  # machine in the middle of a PDF ingest later (Phase 6). Run exactly one machine
+  # (`fly scale count 1`) until the cache moves out of memory.
+  min_machines_running = 1
 
   [[http_service.checks]]
     interval = '30s'
