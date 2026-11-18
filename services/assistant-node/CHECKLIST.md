@@ -60,7 +60,9 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] JSON endpoint and streaming (SSE) endpoint with the same shape as .NET
 - [x] 15-minute cache, 25-second timeout, one retry
 - [x] Measured speed against the current ~10 seconds: 7-9 s cold, so no slower than .NET
-- [ ] digital-garden: point the Dashboard summary at the Node URL behind a flag (the frontend still calls .NET)
+- [x] digital-garden branch `srnalla-node-daily-summary` (not merged yet): optional `VITE_DAILY_SUMMARY_API_URL` points the Dashboard summary at the Node service; the Connect Google prompt also recognises the Node wording
+- [x] Checked in the real app on localhost with a real Google sign-in: the Dashboard streamed the summary from the Node service (real login token accepted, CORS fine)
+- [ ] Merge that digital-garden branch, then set `VITE_DAILY_SUMMARY_API_URL` in Vercel once the Fly app is live
 - [ ] Optional: if the wait matters, try switching off Gemini's "thinking" for the summary (most of the time is the model, not Google)
 - [ ] The cache is per machine and in memory: keep one Fly machine, or move it to Supabase if you scale out
 
@@ -97,7 +99,7 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 
 - [ ] The tools that change your account: `create_event`, `create_draft`, `append_to_doc`, `read_doc`
 - [ ] The existing .NET Google connect flow and chat calendar tools after the database change
-- [ ] A real signed-in request to `/assistant/whoami` from the app on localhost:5173
+- [x] A real signed-in request from the app on localhost:5173 is accepted (shown by the daily summary request)
 - [ ] A second user cannot read the first user's conversations, documents or Google token
 - [ ] Same questions on .NET and Node, compare answers and speed
 
