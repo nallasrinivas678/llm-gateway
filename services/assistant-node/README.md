@@ -2,12 +2,12 @@
 
 The Node.js (TypeScript) version of the TaskTide Assistant backend. It is being built to replace the .NET service in `src/LlmGateway.Assistant`, one feature at a time.
 
-**Status: chat works; the other two features are not built.** The service starts, checks a user's login token, serves `POST /assistant/chat` (a Gemini agent that can use the Google tools and remembers the conversation), and has tests for all of it. Daily summary and PDF Q&A are still to come.
+**Status: chat and the daily summary work; PDF Q&A is not built.** The service starts, checks a user's login token, serves `POST /assistant/chat` (a Gemini agent that can use the Google tools and remembers the conversation), serves the daily summary (`GET /assistant/daily-summary` and `/stream`), and has tests for all of it. PDF Q&A is still to come.
 
 | Feature | Today's home (.NET) | Planned here |
 |---|---|---|
 | Chat with tools (calendar, email drafts, docs) | `POST /assistant/chat` | built (tasks and web search still to come) |
-| Daily summary | `GET /assistant/daily-summary` | Phase 4 |
+| Daily summary | `GET /assistant/daily-summary`, `/assistant/daily-summary/stream` | built |
 | PDF question answering | `POST /assistant/docs`, `/assistant/docs/ask` | Phase 5 |
 
 The full plan is in `PDF_QA_PLAN.md` and the approved migration plan (ask your lead for the link). Read it before picking up work.
@@ -88,10 +88,11 @@ Stays in code on purpose: safety rules (which characters a Google Doc id may hav
 | `npm run dev` | Starts the service and restarts on file changes (set the variables in your shell first). |
 | `npm run typecheck` | Checks the TypeScript for mistakes without running it. |
 | `npm test` | Runs the automated tests. |
+| `npm run test:coverage` | Runs the tests and fails if coverage drops below the floor in `vitest.config.ts` (90% lines, 75% branches). |
 | `npm run build` | Compiles to the `dist` folder. |
 | `npm start` | Runs the compiled build. |
 
-Run `npm run typecheck` and `npm test` before every commit.
+Run `npm run typecheck` and `npm test` before every commit. The same checks run on every pull request (see below).
 
 ## How a request flows today
 
@@ -181,6 +182,17 @@ Errors: `400` bad request body, `401` no or bad login token, `404` conversation 
 
 Tool names changed from .NET (for example `list_events` instead of `list_upcoming_calendar_events`), so `toolCallsExecuted` shows the new names.
 
+## The daily summary endpoints
+
+Both need the same `Authorization: Bearer <Supabase login token>` header and give the same data as the .NET service.
+
+- `GET /assistant/daily-summary` returns `{ summary, emails: [{category, subject, from, date}], events: [{summary, start, end}], generatedAtUtc }`.
+- `GET /assistant/daily-summary/stream` sends Server-Sent Events: `status` (`{message}`), `chunk` (`{text}`, the summary as it is written), then `done` (the same object the JSON endpoint returns). On failure it sends `error` (`{detail}`).
+
+How it works (`src/dailySummary/dailySummaryService.ts`): it is not an agent. Fixed code runs the three Gmail searches (orders, bills, travel; the queries are in `config/default.json` > `dailySummary`) and the Calendar read at the same time, then makes one Gemini call that writes the briefing. Email text is flattened to one line each and the prompt says it is data, not instructions. The result is cached for 15 minutes per user, in memory, so run one machine. The JSON endpoint gives the model 25 seconds and one retry; the streaming one has no retry, because text may already have reached the browser.
+
+Errors: `401` no or bad login token, `502` with `{detail}` (for example "Google account is not connected"; other failures give a generic message and the details only go to the server log), `503` when the needed secrets are missing. Chat does not need to be configured for the summary to work: the summary needs everything chat needs except `SUPABASE_ANON_KEY`.
+
 ## What is an MCP server here?
 
 An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
@@ -190,6 +202,23 @@ An MCP server is a small program that offers tools to an AI agent. Ours, in `src
 - Google calls live in `calendar.ts`, `gmail.ts` and `docs.ts`, so they can be tested without MCP.
 - There is no tool that sends email. `create_draft` saves a draft and the user sends it from Gmail.
 - Text coming back from Gmail and Docs is data, not instructions. Tool descriptions say so.
+
+## Checks and deploys (GitHub Actions)
+
+Workflows live in `.github/workflows` at the repository root. They only run when something under `services/assistant-node` changes.
+
+| Workflow | When | What it does |
+|---|---|---|
+| `assistant-node-ci.yml` | every pull request, and pushes to `main` | Typecheck, tests with the coverage floor, build, `npm audit` for high-severity problems in the shipped packages. A second job builds the Docker image, starts it and checks `/health`. |
+| `assistant-node-deploy.yml` | push to `main`, or "Run workflow" by hand | Typecheck, tests, then `flyctl deploy --remote-only` (built on Fly, no Docker needed in CI). A failed `/health` check on the new version keeps the old one running. |
+
+The deploy workflow is **off until you switch it on**, so a missing Fly app never shows as a red build:
+
+1. Create the app once and set its secrets (see Secrets below).
+2. Create a deploy token (`fly tokens create deploy -a <your-fly-app>`) and save it as the repository secret `FLY_API_TOKEN`.
+3. Set the repository variable `ASSISTANT_NODE_DEPLOY` to `true`. Optionally add required reviewers to the `production` environment so a person approves each deploy.
+
+Secrets for the service itself are not set by CI. They go to Fly with the script below, so no application secret is stored in GitHub. Dependabot opens a weekly pull request for npm and Actions updates.
 
 ## Secrets
 
@@ -203,4 +232,4 @@ It prints only the key names, asks you to confirm, and by default stages the sec
 
 ## Not done yet
 
-Task and web search tools, approval before the assistant changes anything, daily summary, PDF Q&A, and CI. Saving conversations has been tested against a fake database, and the database's security rules were checked separately, but not yet end to end with a real signed-in user. The Dockerfile and `fly.toml` have not been built or deployed (no Docker on the dev machine yet). See `CHECKLIST.md`.
+Task and web search tools, approval before the assistant changes anything, PDF Q&A, and CI. Saving conversations has been tested against a fake database, and the database's security rules were checked separately, but not yet end to end with a real signed-in user. The Dockerfile and `fly.toml` have not been built or deployed (no Docker on the dev machine yet). See `CHECKLIST.md`.

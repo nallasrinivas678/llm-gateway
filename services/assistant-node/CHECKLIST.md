@@ -4,7 +4,7 @@ What is done, what is pending, and who needs to do it. Update this file in the s
 
 Legend: `[x]` done and checked, `[ ]` pending. **(you)** needs a decision or an action from the project owner. **(dev)** is development work.
 
-Last updated: 2026-11-17 (chat core built). Branch `srnalla-langchain-assistant`, [PR #11](https://github.com/nallasrinivas678/llm-gateway/pull/11).
+Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-langchain-assistant`, [PR #11](https://github.com/nallasrinivas678/llm-gateway/pull/11).
 
 ## 1. Done
 
@@ -19,7 +19,11 @@ Last updated: 2026-11-17 (chat core built). Branch `srnalla-langchain-assistant`
 - [x] Chat core: `POST /assistant/chat` with a Gemini agent, the six Google tools, a system prompt, a step limit with a friendly reply, and conversations saved as the signed-in user (row rules decide ownership)
 - [x] Chat checked live with real Gemini and your real Google account (a calendar read, a question about what it can do, a follow-up that used the history)
 - [x] Database security rules for conversations checked in a test that rolls back (another user can neither see nor write into your conversation)
-- [x] 88 unit tests pass; typecheck and build clean
+- [x] Daily summary: `GET /assistant/daily-summary` and `/stream` (same JSON and SSE events as .NET), 15-minute cache, 25 s timeout with one retry on the JSON path
+- [x] Daily summary checked live with your real account: about 7-9 s cold (Google fetch 0.6 s, the rest is Gemini), 0 ms cached; the .NET service takes about 10 s
+- [x] 153 unit tests pass (98.6% of lines covered); typecheck and build clean. `npm run test:coverage` enforces a floor (90% lines, 75% branches)
+- [x] GitHub Actions: CI on every pull request (typecheck, tests, build, `npm audit`, Docker build and `/health` check) and a Fly deploy workflow that stays off until you switch it on; Dependabot for npm and Actions
+- [x] Decided against Terraform for now (see ARCHITECTURE.md > decisions)
 - [x] [PR #11](https://github.com/nallasrinivas678/llm-gateway/pull/11) open with all commits pushed
 
 ## 2. Decisions needed (you)
@@ -53,9 +57,12 @@ Last updated: 2026-11-17 (chat core built). Branch `srnalla-langchain-assistant`
 
 ## 5. Daily summary (dev)
 
-- [ ] JSON endpoint and streaming (SSE) endpoint with the same shape as .NET
-- [ ] 15-minute cache, 25-second timeout, one retry
-- [ ] Measure speed against the current ~10 seconds (Gmail through our tools needs one call per email)
+- [x] JSON endpoint and streaming (SSE) endpoint with the same shape as .NET
+- [x] 15-minute cache, 25-second timeout, one retry
+- [x] Measured speed against the current ~10 seconds: 7-9 s cold, so no slower than .NET
+- [ ] digital-garden: point the Dashboard summary at the Node URL behind a flag (the frontend still calls .NET)
+- [ ] Optional: if the wait matters, try switching off Gemini's "thinking" for the summary (most of the time is the model, not Google)
+- [ ] The cache is per machine and in memory: keep one Fly machine, or move it to Supabase if you scale out
 
 ## 6. PDF Q&A (dev)
 
@@ -75,11 +82,12 @@ Last updated: 2026-11-17 (chat core built). Branch `srnalla-langchain-assistant`
 - [ ] Google tokens are stored as plain text; consider encrypting or Supabase Vault
 - [ ] Timeouts on every outside call; structured logs without personal content
 - [ ] `npm audit`, then ESLint and Prettier before a second developer joins
-- [ ] Add CI (none exists in the repo today)
+- [ ] Make the CI checks required in the repository's branch protection rules (GitHub setting, **you**)
 
 ## 8. Deployment
 
-- [ ] **(you)** Install Docker (or build in CI) and build the image once
+- [x] Docker image build is now checked by CI on every pull request (still not run on this machine)
+- [ ] **(you)** Switch the deploy workflow on: repository secret `FLY_API_TOKEN`, repository variable `ASSISTANT_NODE_DEPLOY=true` (steps in the service README)
 - [ ] **(you)** `fly launch --no-deploy --copy-config --config fly.toml`, then `./scripts/set-fly-secrets.ps1 -App <app>`
 - [ ] Deploy, then check `/health` on the Fly URL
 - [ ] Point digital-garden at the new service behind a feature flag; keep .NET running for rollback

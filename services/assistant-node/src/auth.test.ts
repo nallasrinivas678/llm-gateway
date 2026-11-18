@@ -36,4 +36,38 @@ describe("auth", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ userId: "11111111-1111-1111-1111-111111111111" });
   });
+
+  const whoami = (authorization: string) => app.request("/assistant/whoami", { headers: { authorization } });
+
+  it("rejects an authorization header that is not a Bearer token", async () => {
+    expect((await whoami(`Basic ${await sign({ sub: "u1" })}`)).status).toBe(401);
+  });
+
+  it("rejects a token that has no user id", async () => {
+    expect((await whoami(`Bearer ${await sign({})}`)).status).toBe(401);
+  });
+
+  it("rejects a token signed with a different secret", async () => {
+    const forged = await new SignJWT({})
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject("u1")
+      .setIssuer(issuer)
+      .setExpirationTime("5m")
+      .sign(new TextEncoder().encode("another-secret-another-secret-another-1"));
+    expect((await whoami(`Bearer ${forged}`)).status).toBe(401);
+  });
+
+  it("rejects an expired token", async () => {
+    const expired = await new SignJWT({})
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject("u1")
+      .setIssuer(issuer)
+      .setExpirationTime(Math.floor(Date.now() / 1000) - 60)
+      .sign(new TextEncoder().encode(secret));
+    expect((await whoami(`Bearer ${expired}`)).status).toBe(401);
+  });
+
+  it("rejects garbage in place of a token", async () => {
+    expect((await whoami("Bearer not.a.jwt")).status).toBe(401);
+  });
 });

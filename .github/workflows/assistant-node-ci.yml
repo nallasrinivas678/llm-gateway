@@ -1,0 +1,70 @@
+name: assistant-node CI
+
+# Runs on every pull request and on main, but only when the Node service (or this file) changed.
+on:
+  pull_request:
+    paths:
+      - "services/assistant-node/**"
+      - ".github/workflows/assistant-node-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/assistant-node/**"
+      - ".github/workflows/assistant-node-ci.yml"
+
+# A newer push to the same branch replaces the older run.
+concurrency:
+  group: assistant-node-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: services/assistant-node
+
+jobs:
+  test:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/assistant-node/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Tests with coverage floor
+        run: npm run test:coverage
+      - run: npm run build
+      # Only packages that ship in the image; fails on a high or critical known vulnerability.
+      - run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    name: Docker image builds and starts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build --tag assistant-node:ci .
+
+      # No real secrets: the service only needs the issuer URL to start, and answers /health
+      # without logging in. Chat and the daily summary stay switched off, which is expected here.
+      - name: Start it and check /health
+        run: |
+          docker run --detach --name assistant -p 8080:8080 \
+            -e SUPABASE_JWT_ISSUER=https://example.supabase.co/auth/v1 assistant-node:ci
+          for i in $(seq 1 20); do
+            if curl --fail --silent http://localhost:8080/health; then echo; exit 0; fi
+            sleep 1
+          done
+          docker logs assistant
+          exit 1

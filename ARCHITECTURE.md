@@ -29,7 +29,7 @@ The alternative — scoping the cache per caller — would mean two services ask
 
 ## Assistant service on Node (`services/assistant-node`)
 
-> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader and the chat endpoint (`POST /assistant/chat`) are built and tested. The daily summary and PDF Q&A are not built yet. The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
+> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader and the chat endpoint (`POST /assistant/chat`) are built and tested. The daily summary endpoints (JSON and streaming) are built and checked live; PDF Q&A is not built yet. The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
 
 ### Why move it
 
@@ -54,7 +54,7 @@ flowchart LR
     AG -->|"as the user (RLS)"| C[("conversations,<br/>messages")]
 ```
 
-All lines exist today for chat. Daily summary and PDF Q&A are not drawn because they are not built.
+All lines exist today for chat. The daily summary reads Google and calls Gemini the same way, without the agent; PDF Q&A is not drawn because it is not built.
 
 ### Components
 
@@ -66,7 +66,8 @@ All lines exist today for chat. Daily summary and PDF Q&A are not drawn because 
 | Google token service and Postgres store | `src/google-tokens/` | built, tested (live) |
 | Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt | `src/chat/` | built, tested; checked live with Gemini and Google (saving to Supabase checked only against a fake database and the database's rules) |
 | Chat endpoint and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
-| Daily summary, PDF Q&A | not started | planned |
+| Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
+| PDF Q&A | not started | planned |
 
 ### Google tools (MCP)
 
@@ -103,6 +104,8 @@ Safeguards: Google's error text is never passed to the model, line breaks in the
 | Our own Google tool server instead of Google's hosted MCP servers | Google's hosted servers are in Developer Preview and need a company-domain account. They also cannot send mail and have no append tool. |
 | Conversations stored as the signed-in user (row-level security), not with a server key | No powerful secret for chat data; the database enforces ownership. The security rules were checked in a test that rolls back. |
 | Google tools connected to the agent in memory, with our own small MCP-to-LangChain converter | `@langchain/mcp-adapters`' `loadMcpTools` (v2.0.3) needs a newer MCP client than the SDK we install and fails at runtime. We only need `listTools` and `callTool`, so ~25 lines of our own are simpler and tested. |
+| No Terraform for now | One Fly app is fully described by `fly.toml`, secrets are set by a script, and the database changes are SQL migrations in `supabase/`. Terraform would add state to store and protect for no gain. Revisit when there is a second environment (staging), more than one Fly app or volume, DNS, or Supabase project settings that should be reviewed as code. |
+| GitHub Actions for CI and deploy | The code is on GitHub already. CI checks every pull request; deploy is a separate workflow that is switched on by a repository variable, and builds on Fly's builders (`flyctl deploy --remote-only`). |
 | Draft-only email | Matches the existing "never auto-submit" rule; a model error cannot send a message |
 | Narrow database login for tokens | If the connection string leaks, only Google tokens are exposed, not the whole database |
 | `config/default.json` for URLs and limits, environment for secrets | No URLs or tunable numbers in code; secrets never in git |
