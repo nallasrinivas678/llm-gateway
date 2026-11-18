@@ -18,6 +18,17 @@ export const settingsSchema = z.object({
     maxMessageLength: positiveInt,
   }),
   cors: z.object({ allowedOrigins: z.array(z.string().url()).min(1) }),
+  dailySummary: z.object({
+    // Gmail searches behind the summary: Gmail's own search syntax, one entry per category.
+    emailQueries: z.array(z.object({ category: z.string().min(1), query: z.string().min(1) })).min(1),
+    maxEmailsPerCategory: positiveInt,
+    maxTotalEmails: positiveInt,
+    maxCalendarEvents: positiveInt,
+    llmTimeoutSeconds: positiveInt,
+    // Extra tries after the first one, for the non-streaming call only.
+    llmMaxRetries: z.number().int().min(0),
+    cacheTtlSeconds: positiveInt,
+  }),
   google: z.object({
     urls: z.object({
       calendarEvents: httpsUrl,

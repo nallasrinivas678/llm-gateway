@@ -5,18 +5,27 @@ import { createClient } from "@supabase/supabase-js";
 import { createChatService, type ChatService } from "./chat/chatService.js";
 import { createSupabaseConversationStore } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
+import { createDailySummaryService, type DailySummaryService } from "./dailySummary/dailySummaryService.js";
 import { createPgTokenStore } from "./google-tokens/pgTokenStore.js";
 import { createTokenService } from "./google-tokens/tokenService.js";
 
-// Returns undefined, and says which settings are missing, when chat cannot be built.
-export function buildChatService(config: Config): ChatService | undefined {
+export interface Services {
+  chat?: ChatService;
+  dailySummary?: DailySummaryService;
+}
+
+// A service whose settings are missing is left out (and the missing names are logged), so the
+// rest of the service still starts and that route answers 503.
+export function buildServices(config: Config): Services {
   const { SUPABASE_ANON_KEY, SUPABASE_DB_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY } = config;
-  const missing = Object.entries({ SUPABASE_ANON_KEY, SUPABASE_DB_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY })
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-  if (missing.length > 0 || !SUPABASE_ANON_KEY || !SUPABASE_DB_URL || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_API_KEY) {
-    console.warn(`Chat is disabled. Missing settings: ${missing.join(", ")}`);
-    return undefined;
+  const missing = (required: Record<string, string | undefined>) =>
+    Object.entries(required).filter(([, value]) => !value).map(([name]) => name);
+
+  // What both features need: Google tokens and the model.
+  const shared = missing({ SUPABASE_DB_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY });
+  if (shared.length > 0 || !SUPABASE_DB_URL || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_API_KEY) {
+    console.warn(`Chat and daily summary are disabled. Missing settings: ${shared.join(", ")}`);
+    return {};
   }
 
   const tokens = createTokenService({
@@ -25,15 +34,24 @@ export function buildChatService(config: Config): ChatService | undefined {
     clientId: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
   });
+  const getGoogleToken = (userId: string) => tokens.getAccessToken(userId);
 
-  return createChatService({
-    model: new ChatGoogleGenerativeAI({
-      apiKey: GOOGLE_API_KEY,
-      model: config.settings.chat.model,
-      temperature: config.settings.chat.temperature,
-    }),
+  const dailySummary = createDailySummaryService({
+    model: new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: config.settings.chat.temperature }),
     settings: config.settings,
-    getGoogleToken: (userId) => tokens.getAccessToken(userId),
+    getGoogleToken,
+  });
+
+  // Chat also needs the public Supabase key to read and write conversations as the user.
+  if (!SUPABASE_ANON_KEY) {
+    console.warn("Chat is disabled. Missing settings: SUPABASE_ANON_KEY");
+    return { dailySummary };
+  }
+
+  const chat = createChatService({
+    model: new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: config.settings.chat.temperature }),
+    settings: config.settings,
+    getGoogleToken,
     // The user's own token goes to Supabase, so row-level security decides what they can see.
     openStore: (userId, jwt) =>
       createSupabaseConversationStore(
@@ -44,4 +62,5 @@ export function buildChatService(config: Config): ChatService | undefined {
         userId,
       ),
   });
+  return { chat, dailySummary };
 }

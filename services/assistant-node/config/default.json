@@ -7,6 +7,19 @@
       "http://localhost:5173"
     ]
   },
+  "dailySummary": {
+    "emailQueries": [
+      { "category": "order", "query": "category:purchases OR subject:(order OR receipt OR shipped OR delivery OR invoice) newer_than:14d" },
+      { "category": "bill", "query": "subject:(bill OR \"payment due\" OR autopay OR statement OR \"amount due\") newer_than:14d" },
+      { "category": "travel", "query": "subject:(itinerary OR booking OR reservation OR flight OR \"boarding pass\" OR confirmation) OR from:(booking.com OR airbnb OR expedia) newer_than:30d" }
+    ],
+    "maxEmailsPerCategory": 5,
+    "maxTotalEmails": 15,
+    "maxCalendarEvents": 10,
+    "llmTimeoutSeconds": 25,
+    "llmMaxRetries": 1,
+    "cacheTtlSeconds": 900
+  },
   "google": {
     "urls": {
       "calendarEvents": "https://www.googleapis.com/calendar/v3/calendars/primary/events",

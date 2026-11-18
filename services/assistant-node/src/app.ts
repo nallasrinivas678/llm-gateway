@@ -1,15 +1,12 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { createAuth, type AuthEnv } from "./auth.js";
-import type { ChatService } from "./chat/chatService.js";
 import { ConversationNotFoundError } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
-
-interface Services {
-  // Missing when the secrets chat needs are not set; the route then answers 503.
-  chat?: ChatService;
-}
+import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
+import type { Services } from "./wiring.js";
 
 export function createApp(config: Config, services: Services = {}) {
   const app = new Hono<AuthEnv>();
@@ -49,6 +46,41 @@ export function createApp(config: Config, services: Services = {}) {
       console.error("chat failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
       return c.json({ error: "The assistant could not complete the request." }, 502);
     }
+  });
+
+  // Daily summary: same JSON and SSE events as the .NET endpoints. Errors carry a `detail`.
+  const summaryFailure = (error: unknown) => {
+    if (error instanceof SummaryUnavailableError) return error.message;
+    console.error("daily summary failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+    return "The daily summary could not be generated.";
+  };
+
+  assistant.get("/daily-summary", async (c) => {
+    if (!services.dailySummary) return c.json({ detail: "The daily summary is not configured on this server." }, 503);
+    try {
+      return c.json(await services.dailySummary.build(c.get("userId"), c.req.raw.signal));
+    } catch (error) {
+      return c.json({ detail: summaryFailure(error) }, 502);
+    }
+  });
+
+  assistant.get("/daily-summary/stream", (c) => {
+    const summary = services.dailySummary;
+    if (!summary) return c.json({ detail: "The daily summary is not configured on this server." }, 503);
+
+    c.header("X-Accel-Buffering", "no");   // keep proxies from holding the stream back
+    return streamSSE(c, async (stream) => {
+      try {
+        for await (const event of summary.stream(c.get("userId"), c.req.raw.signal)) {
+          const data = event.type === "status" ? { message: event.message } : event.type === "chunk" ? { text: event.text } : event.result;
+          await stream.writeSSE({ event: event.type, data: JSON.stringify(data) });
+        }
+      } catch (error) {
+        // The client leaving is not an error worth reporting.
+        if (c.req.raw.signal.aborted) return;
+        await stream.writeSSE({ event: "error", data: JSON.stringify({ detail: summaryFailure(error) }) });
+      }
+    });
   });
 
   app.route("/assistant", assistant);
