@@ -177,12 +177,45 @@ llm-gateway/
 │       ├── Cost/                       # token metering + usage rollups
 │       ├── Observability/              # tracing middleware
 │       └── appsettings.json
+├── services/
+│   └── assistant-node/                 # Node.js assistant (LangChain + MCP), work in progress - see ARCHITECTURE.md
+├── supabase/                           # SQL migrations and checks
 ├── tests/
 │   └── LlmGateway.Tests/               # unit + integration tests (incl. mock provider for resilience tests)
 ├── docker-compose.yml                  # local Redis + Cosmos emulator
 └── README.md
 #command to run docker:  docker-compose up -d
 ```
+
+## Code map (Graphify)
+
+[Graphify](https://github.com/Graphify-Labs/graphify) turns this repo (code, docs, SQL, configs) into a knowledge graph, so you can see how the pieces connect and which files matter for a change. It is a developer tool only: no running service uses it. The output folder `graphify-out/` is generated and git-ignored.
+
+Install once (Python 3.11 or newer). The package name has two y's; the one-y name does not exist:
+
+```bash
+pip install graphifyy
+```
+
+Build or refresh the map from the repo root:
+
+```bash
+graphify update .
+```
+
+This writes `graphify-out/GRAPH_REPORT.md` (summary), `graph.html` (interactive view, open in a browser) and `graph.json`. Code is parsed locally with Tree-sitter: no API key is needed and nothing leaves your machine. Graphify skips everything in `.gitignore`, so your `.env` and `node_modules` are not read into the graph.
+
+Ask questions of the graph:
+
+```bash
+graphify explain "createGoogleMcpServer"
+graphify path "createTokenService" "GoogleReconnectRequired"
+```
+
+Good to know:
+- The map is a snapshot. Run `graphify update .` again after code changes.
+- SQL files are skipped unless you also run `pip install "graphifyy[sql]"`.
+- `graphify install` is optional and not needed for the commands above. It registers a skill, adds a hook that runs before every file search, and edits `CLAUDE.md`, so only run it if the team agrees.
 
 ## PDF Q&A (RAG)
 
@@ -335,6 +368,7 @@ Row-level security is on for every table, and the Storage policies limit each us
 - [ ] **Phase 2**: circuit breaker + fallback to a second provider, Redis cache
 - [ ] **Phase 3**: cost tracking dashboard + budget alerts, Application Insights tracing
 - [ ] **Phase 4**: Service Bus-based queueing for burst handling, eval-gated CI pipeline
+- [ ] **Assistant on Node**: moving chat, daily summary and PDF Q&A to `services/assistant-node` (LangChain + MCP). Design in [ARCHITECTURE.md](ARCHITECTURE.md#assistant-service-on-node-servicesassistant-node), pending work in [CHECKLIST.md](services/assistant-node/CHECKLIST.md)
 - [ ] **Next project**: [Insurance Claims Triage Agent](https://github.com/nallasrinivas678) built on top of this gateway
 
 ## License

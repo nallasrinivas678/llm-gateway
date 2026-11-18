@@ -1,0 +1,59 @@
+name: assistant-node deploy
+
+# Deploys the Node service to Fly.io.
+#
+# Switched off until you turn it on, so a missing Fly app or token never shows up as a red build:
+#   1. Create the app once and set its secrets (see services/assistant-node/README.md > Deploy).
+#   2. Add the repository secret FLY_API_TOKEN (a deploy token: `fly tokens create deploy -a <app>`).
+#   3. Add the repository variable ASSISTANT_NODE_DEPLOY = true.
+# After that, every merge to main that changes the service deploys it. "Run workflow" in the
+# Actions tab deploys on demand even while the variable is off.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/assistant-node/**"
+  workflow_dispatch:
+
+# Two deploys never run at once, and a running deploy is never cancelled halfway.
+concurrency:
+  group: assistant-node-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: services/assistant-node
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.ASSISTANT_NODE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Add required reviewers to the "production" environment in the repository settings
+    # if a person should approve each deploy.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/assistant-node/package-lock.json
+
+      # Never deploy something that does not pass.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Built on Fly's own builders, so Docker is not needed here. The rolling deploy waits for
+      # the /health check in fly.toml and keeps the old version if the new one fails it.
+      - name: Deploy
+        run: flyctl deploy --remote-only --config fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

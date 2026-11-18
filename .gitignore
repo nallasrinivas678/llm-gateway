@@ -15,3 +15,9 @@ secrets.json
 ## OS
 .DS_Store
 Thumbs.db
+
+## Graphify code map (generated; rebuild with: graphify update .)
+graphify-out/
+
+# Test coverage reports
+coverage/

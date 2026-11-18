@@ -1,0 +1,60 @@
+{
+  "server": {
+    "port": 8080
+  },
+  "cors": {
+    "allowedOrigins": [
+      "http://localhost:5173"
+    ]
+  },
+  "dailySummary": {
+    "emailQueries": [
+      { "category": "order", "query": "category:purchases OR subject:(order OR receipt OR shipped OR delivery OR invoice) newer_than:14d" },
+      { "category": "bill", "query": "subject:(bill OR \"payment due\" OR autopay OR statement OR \"amount due\") newer_than:14d" },
+      { "category": "travel", "query": "subject:(itinerary OR booking OR reservation OR flight OR \"boarding pass\" OR confirmation) OR from:(booking.com OR airbnb OR expedia) newer_than:30d" }
+    ],
+    "maxEmailsPerCategory": 5,
+    "maxTotalEmails": 15,
+    "maxCalendarEvents": 10,
+    "llmTimeoutSeconds": 25,
+    "llmMaxRetries": 1,
+    "cacheTtlSeconds": 900
+  },
+  "google": {
+    "urls": {
+      "calendarEvents": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      "gmailMessages": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+      "gmailDrafts": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+      "docsDocuments": "https://docs.googleapis.com/v1/documents",
+      "oauthToken": "https://oauth2.googleapis.com/token"
+    },
+    "limits": {
+      "calendar": {
+        "defaultEvents": 10,
+        "maxEvents": 25,
+        "maxSummaryLength": 200,
+        "maxDescriptionLength": 2000
+      },
+      "gmail": {
+        "defaultResults": 5,
+        "maxResults": 15,
+        "maxQueryLength": 500,
+        "maxSubjectLength": 200,
+        "maxBodyLength": 20000
+      },
+      "docs": {
+        "maxReadChars": 20000,
+        "maxAppendChars": 20000
+      }
+    },
+    "tokens": {
+      "refreshMarginSeconds": 60
+    }
+  },
+  "chat": {
+    "model": "gemini-2.5-flash",
+    "temperature": 0.2,
+    "maxToolRounds": 5,
+    "maxMessageLength": 4000
+  }
+}
