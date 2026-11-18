@@ -11,6 +11,8 @@ const dbAndGoogle = {
 };
 
 describe("buildServices", () => {
+  const allWarnings = () => (warn.mock.calls as unknown[][]).map((call) => String(call[0])).join(" | ");
+
   let warn: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -33,14 +35,29 @@ describe("buildServices", () => {
     const services = buildServices(loadConfig({ ...base, ...dbAndGoogle }));
     expect(services.dailySummary).toBeDefined();
     expect(services.chat).toBeUndefined();
-    expect(String(warn.mock.calls[0]?.[0])).toContain("SUPABASE_ANON_KEY");
+    expect(allWarnings()).toContain("SUPABASE_ANON_KEY");
   });
 
-  it("builds both when everything is set", () => {
-    const services = buildServices(loadConfig({ ...base, ...dbAndGoogle, SUPABASE_ANON_KEY: "anon-key" }));
+  it("builds everything when everything is set", () => {
+    const services = buildServices(
+      loadConfig({ ...base, ...dbAndGoogle, SUPABASE_ANON_KEY: "anon-key", GOOGLE_REDIRECT_URI: "https://tasktide.app/app/google/callback" }),
+    );
     expect(services.chat).toBeDefined();
     expect(services.dailySummary).toBeDefined();
+    expect(services.googleConnect).toBeDefined();
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("turns Connect Google on only when the redirect address is set", () => {
+    const withoutRedirect = buildServices(loadConfig({ ...base, ...dbAndGoogle, SUPABASE_ANON_KEY: "anon-key" }));
+    expect(withoutRedirect.googleConnect).toBeUndefined();
+    expect(allWarnings()).toContain("GOOGLE_REDIRECT_URI");
+
+    const withRedirect = buildServices(
+      loadConfig({ ...base, ...dbAndGoogle, SUPABASE_ANON_KEY: "anon-key", GOOGLE_REDIRECT_URI: "https://tasktide.app/app/google/callback" }),
+    );
+    expect(withRedirect.googleConnect).toBeDefined();
+    expect(withRedirect.chat).toBeDefined();
   });
 
   it("builds nothing when one of the shared settings is missing", () => {

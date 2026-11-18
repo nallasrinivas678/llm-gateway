@@ -21,7 +21,8 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Database security rules for conversations checked in a test that rolls back (another user can neither see nor write into your conversation)
 - [x] Daily summary: `GET /assistant/daily-summary` and `/stream` (same JSON and SSE events as .NET), 15-minute cache, 25 s timeout with one retry on the JSON path
 - [x] Daily summary checked live with your real account: about 7-9 s cold (Google fetch 0.6 s, the rest is Gemini), 0 ms cached; the .NET service takes about 10 s
-- [x] 153 unit tests pass (98.6% of lines covered); typecheck and build clean. `npm run test:coverage` enforces a floor (90% lines, 75% branches)
+- [x] Connect Google built in Node (`/auth/google/start`, `/auth/google/exchange`): signed expiring `state`, saves only for the logged-in user, scopes `calendar`, `gmail.readonly`, `gmail.compose`, `documents`; migration `20261118000000_assistant_tokens_insert.sql` written (not applied yet); digital-garden callback page `/app/google/callback` behind `VITE_GOOGLE_CONNECT_API_URL` (branch `srnalla-node-google-connect`)
+- [x] 192 unit tests pass (98.8% of lines covered); typecheck and build clean. `npm run test:coverage` enforces a floor (90% lines, 75% branches)
 - [x] GitHub Actions: CI on every pull request (typecheck, tests, build, `npm audit`, Docker build and `/health` check) and a Fly deploy workflow that stays off until you switch it on; Dependabot for npm and Actions
 - [x] Decided against Terraform for now (see ARCHITECTURE.md > decisions)
 - [x] [PR #11](https://github.com/nallasrinivas678/llm-gateway/pull/11) open with all commits pushed
@@ -80,7 +81,9 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 
 - [ ] **(you)** Rotate the Google client secret and the old `postgres` database password. Both were shown in a working session. Recommended, not urgent if that session is private.
 - [ ] Verify Supabase's TLS certificate (today the connection is encrypted but the certificate is not checked)
-- [ ] Fix the .NET Google connect flow: the `state` value is just the user id and can be forged
+- [x] Forgeable `state` fixed in the Node connect flow (the .NET flow still has the old `state` until the web app switches over)
+- [ ] **(you)** Switch Connect Google to Node: apply the insert migration, add the redirect address `https://tasktide.app/app/google/callback` to the OAuth client in the Google Cloud console, set `GOOGLE_REDIRECT_URI` on Fly, set `VITE_GOOGLE_CONNECT_API_URL` in Vercel, then reconnect once (this also adds the `gmail.compose` permission that drafts need)
+- [ ] Live test of the whole connect flow with a real Google account (needs the steps above)
 - [ ] Google tokens are stored as plain text; consider encrypting or Supabase Vault
 - [ ] Timeouts on every outside call; structured logs without personal content
 - [ ] `npm audit`, then ESLint and Prettier before a second developer joins

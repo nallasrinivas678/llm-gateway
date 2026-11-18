@@ -49,6 +49,16 @@
     },
     "tokens": {
       "refreshMarginSeconds": 60
+    },
+    "oauth": {
+      "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/documents"
+      ],
+      "stateTtlSeconds": 600
     }
   },
   "chat": {

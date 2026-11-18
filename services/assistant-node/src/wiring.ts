@@ -6,12 +6,14 @@ import { createChatService, type ChatService } from "./chat/chatService.js";
 import { createSupabaseConversationStore } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { createDailySummaryService, type DailySummaryService } from "./dailySummary/dailySummaryService.js";
+import { createConnectService, type ConnectService } from "./google-oauth/connectService.js";
 import { createPgTokenStore } from "./google-tokens/pgTokenStore.js";
 import { createTokenService } from "./google-tokens/tokenService.js";
 
 export interface Services {
   chat?: ChatService;
   dailySummary?: DailySummaryService;
+  googleConnect?: ConnectService;
 }
 
 // A service whose settings are missing is left out (and the missing names are logged), so the
@@ -28,8 +30,9 @@ export function buildServices(config: Config): Services {
     return {};
   }
 
+  const tokenStore = createPgTokenStore(SUPABASE_DB_URL);
   const tokens = createTokenService({
-    store: createPgTokenStore(SUPABASE_DB_URL),
+    store: tokenStore,
     settings: config.settings.google,
     clientId: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
@@ -42,10 +45,24 @@ export function buildServices(config: Config): Services {
     getGoogleToken,
   });
 
+  // The Connect Google flow also needs to know where Google sends the browser back to.
+  let googleConnect: ConnectService | undefined;
+  if (config.GOOGLE_REDIRECT_URI) {
+    googleConnect = createConnectService({
+      store: tokenStore,
+      settings: config.settings.google,
+      clientId: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
+      redirectUri: config.GOOGLE_REDIRECT_URI,
+    });
+  } else {
+    console.warn("Connect Google is disabled. Missing settings: GOOGLE_REDIRECT_URI");
+  }
+
   // Chat also needs the public Supabase key to read and write conversations as the user.
   if (!SUPABASE_ANON_KEY) {
     console.warn("Chat is disabled. Missing settings: SUPABASE_ANON_KEY");
-    return { dailySummary };
+    return { dailySummary, googleConnect };
   }
 
   const chat = createChatService({
@@ -62,5 +79,5 @@ export function buildServices(config: Config): Services {
         userId,
       ),
   });
-  return { chat, dailySummary };
+  return { chat, dailySummary, googleConnect };
 }

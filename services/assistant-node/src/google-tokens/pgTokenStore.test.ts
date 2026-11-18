@@ -73,6 +73,19 @@ describe("Postgres token store", () => {
     expect(verbs).toEqual(["select", "update"]);
   });
 
+  it("saves a first-time connection as an upsert for that user only", async () => {
+    pool.query.mockResolvedValue({ rows: [] });
+    const expiresAt = new Date("2026-11-18T12:00:00Z");
+
+    await createPgTokenStore(url).saveConnected("user-1", { accessToken: "a", refreshToken: "r", scopes: "s1 s2", expiresAt });
+
+    const [sql, params] = pool.query.mock.calls[0]!;
+    expect(String(sql)).toMatch(/insert into public\.google_tokens/i);
+    expect(String(sql)).toMatch(/on conflict \(user_id\) do update/i);
+    expect(String(sql)).not.toMatch(/delete/i);
+    expect(params).toEqual(["user-1", "a", "r", "s1 s2", expiresAt]);
+  });
+
   it("closes the pool", async () => {
     await createPgTokenStore(url).close();
     expect(pool.end).toHaveBeenCalledOnce();

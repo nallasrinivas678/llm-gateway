@@ -1,6 +1,6 @@
 // Gives the rest of the service a valid Google access token for a user, refreshing it when it is
 // about to expire. Port of the read-and-refresh half of the .NET GoogleOAuthService
-// (GetValidAccessTokenAsync). The first-time OAuth connect flow stays in .NET for now.
+// (GetValidAccessTokenAsync). The first-time connect flow is in src/google-oauth.
 import type { GoogleSettings } from "../config.js";
 import type { FetchFn } from "../google-mcp/common.js";
 

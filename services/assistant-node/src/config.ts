@@ -38,6 +38,13 @@ export const settingsSchema = z.object({
       oauthToken: httpsUrl,
     }),
     tokens: z.object({ refreshMarginSeconds: positiveInt }),
+    // The first-time "Connect Google" flow. Scopes are the least this service needs: Gmail
+    // drafts need gmail.compose (gmail.send alone cannot create a draft), and nothing here sends mail.
+    oauth: z.object({
+      authorizationUrl: httpsUrl,
+      scopes: z.array(z.string().min(1)).min(1),
+      stateTtlSeconds: positiveInt,
+    }),
     limits: z.object({
       calendar: z
         .object({ defaultEvents: positiveInt, maxEvents: positiveInt, maxSummaryLength: positiveInt, maxDescriptionLength: positiveInt })
@@ -93,6 +100,9 @@ const envSchema = z.object({
   ),
   GOOGLE_CLIENT_ID: z.preprocess(blankIsUnset, z.string().min(1).optional()),
   GOOGLE_CLIENT_SECRET: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  // Where Google sends the browser after consent: a page of the web app, e.g.
+  // https://tasktide.app/app/google/callback. Must also be listed in the Google Cloud console.
+  GOOGLE_REDIRECT_URI: z.preprocess(blankIsUnset, z.string().url().optional()),
 });
 
 const splitList = (value?: string) => {
@@ -114,6 +124,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, settings: Setti
     SUPABASE_DB_URL: parsed.SUPABASE_DB_URL,
     GOOGLE_CLIENT_ID: parsed.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: parsed.GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI: parsed.GOOGLE_REDIRECT_URI,
     settings,
   };
 }
