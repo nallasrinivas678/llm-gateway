@@ -63,6 +63,18 @@ const assessmentAnswer = {
 };
 
 describe("resume match service", () => {
+  it("uses the user's own target score when given, and reports readability checks", async () => {
+    const { generate } = scripted(requirementsAnswer, assessmentAnswer);
+    const { store, saved } = fakeStore();
+    const service = createMatchService({ generate, settings, openStore: () => store });
+
+    const view = await service.start({ userId: "u1", jwt: "jwt", resumeText, jobText, targetScore: 55 });
+
+    expect(saved.match).toMatchObject({ targetScore: 55 });
+    expect(view).toMatchObject({ targetScore: 55, reachedTarget: true }); // the score of 56 meets 55
+    expect(view.formatChecks.map((c) => c.id)).toEqual(["email", "phone", "sections", "dates", "bullets", "length", "layout"]);
+  });
+
   it("builds the requirements once, checks the resume, scores it in code and saves version 1", async () => {
     const { generate, prompts } = scripted(requirementsAnswer, assessmentAnswer);
     const { store, saved } = fakeStore();
@@ -83,10 +95,10 @@ describe("resume match service", () => {
     expect(view.results.map((r) => r.status)).toEqual(["met", "met", "missing", "partial", "missing"]);
     expect(view.score).toBe(56);
     expect(view.missing.map((r) => r.id)).toEqual([3, 4, 5]);
-    expect(view).toMatchObject({ matchId: "match-1", version: 1, targetScore: 90, reachedTarget: false, jobUrl: "https://jobs.example.com/1" });
+    expect(view).toMatchObject({ matchId: "match-1", version: 1, targetScore: 80, reachedTarget: false, jobUrl: "https://jobs.example.com/1" });
 
     expect(openStore).toHaveBeenCalledWith("u1", "jwt");
-    expect(saved.match).toMatchObject({ title: "Senior .NET engineer at Contoso", jobUrl: "https://jobs.example.com/1", targetScore: 90 });
+    expect(saved.match).toMatchObject({ title: "Senior .NET engineer at Contoso", jobUrl: "https://jobs.example.com/1", targetScore: 80 });
     expect(saved.first).toMatchObject({ version: 1, resumeText, score: 56, confirmed: [] });
 
     // Both prompts say the text is data, and the check prompt numbers the fixed requirements.

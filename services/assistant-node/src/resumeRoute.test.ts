@@ -27,6 +27,7 @@ const view: MatchView = {
   results: [{ requirementId: 1, status: "met", evidence: "C#" }],
   missing: [],
   reachedTarget: true,
+  formatChecks: [{ id: "email", ok: true, message: "Email address found." }],
 };
 
 function fakeService(overrides: Partial<MatchService> = {}) {
@@ -116,6 +117,16 @@ describe("POST /resume/matches", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(view);
     expect(service.start).toHaveBeenCalledWith({ userId, jwt: expect.any(String), resumeText: "resume", jobText: "job", jobUrl: "https://jobs.example.com/1" });
+  });
+
+  it("passes the user's own target score on, within 50 to 100", async () => {
+    const service = fakeService();
+    const app = createApp(config, { resumeMatch: service });
+    expect((await call(app, "/resume/matches", json({ resumeText: "r", jobText: "j", targetScore: 70 }))).status).toBe(200);
+    expect(service.start).toHaveBeenCalledWith(expect.objectContaining({ targetScore: 70 }));
+    expect((await call(app, "/resume/matches", json({ resumeText: "r", jobText: "j", targetScore: 40 }))).status).toBe(400);
+    expect((await call(app, "/resume/matches", json({ resumeText: "r", jobText: "j", targetScore: 101 }))).status).toBe(400);
+    expect((await call(app, "/resume/matches", json({ resumeText: "r", jobText: "j", targetScore: 80.5 }))).status).toBe(400);
   });
 
   it("rejects a malformed body", async () => {

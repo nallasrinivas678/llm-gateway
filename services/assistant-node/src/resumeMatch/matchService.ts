@@ -3,6 +3,7 @@
 // the user approves every change (that comes in phase 2).
 import { z } from "zod";
 import type { Settings } from "../config.js";
+import { checkFormat, type FormatCheck } from "./formatChecks.js";
 import { MatchNotFoundError, ResumeInputError, VersionConflictError } from "./errors.js";
 import type { MatchStore, MatchSummary, StoredMatch, StoredVersion } from "./matchStore.js";
 import { applyAdditions, type AppliedChange, type ConfirmedItem, type SkippedChange } from "./rewrite.js";
@@ -59,6 +60,8 @@ export interface StartInput {
   resumeText: string;
   jobText: string;
   jobUrl?: string;
+  // The user's own target; the configured default applies when left out.
+  targetScore?: number;
 }
 
 export interface MatchView {
@@ -74,6 +77,8 @@ export interface MatchView {
   results: RequirementResult[];
   missing: Requirement[];
   reachedTarget: boolean;
+  // Readability of the latest version's text. Separate from the score.
+  formatChecks: FormatCheck[];
 }
 
 export interface MatchServiceDeps {
@@ -98,6 +103,7 @@ export function viewOf(match: StoredMatch, maxRewrites: number): MatchView {
     results,
     missing: openGaps(match.requirements, results),
     reachedTarget: score >= match.targetScore,
+    formatChecks: checkFormat(latest?.resumeText ?? ""),
   };
 }
 
@@ -212,7 +218,7 @@ export function createMatchService(deps: MatchServiceDeps) {
       const { results, score } = await assess(requirements, resumeText);
 
       const store = deps.openStore(input.userId, input.jwt);
-      const match = { title, jobUrl: input.jobUrl ?? null, jobText, requirements, targetScore: limits.targetScore };
+      const match = { title, jobUrl: input.jobUrl ?? null, jobText, requirements, targetScore: input.targetScore ?? limits.targetScore };
       const matchId = await store.createMatch(match, { version: 1, resumeText, score, results, confirmed: [] });
       const createdAt = new Date().toISOString();
       return viewOf({ ...match, id: matchId, createdAt, versions: [{ version: 1, resumeText, score, results, confirmed: [], createdAt }] }, limits.maxRewrites);

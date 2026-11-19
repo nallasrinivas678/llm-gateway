@@ -1,6 +1,6 @@
 # Plan: Resume match loop (TaskTide)
 
-Status: plan only, nothing built. 2026-11-18.
+Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 and 2 built on branch `srnalla-resume-match-checks`; items 3 to 7 planned below. 2026-11-19.
 
 ## Goal
 
@@ -76,3 +76,44 @@ Later, if wanted: PDF or Word download, a link to the job tracker, a cover lette
 
 - The 5-round cap and the 2:1 must/nice weights are starting values, to tune after the live run.
 - Whether you can remove a requirement you think is irrelevant (it changes the score). Suggested: yes, in phase 3.
+
+## Roadmap after the first build (market comparison, 2026-11-19)
+
+Compared with Simplify and Jobscan (public help pages; Wonsulting could not be confirmed). What we have that they don't: a quoted piece of evidence for every verdict, a score computed in code, and an honesty guard (only skills the user confirms, no invented numbers or names). Where they are ahead: ATS and formatting checks, rewriting existing bullets, export, tracking jobs, an extension. The seven items below close the gaps that matter, in this order. Each ends usable and keeps the rules above: never add a skill the user did not confirm, the user approves every change, resume text is data and never logged.
+
+| # | Item | Size | Model calls | Status |
+|---|---|---|---|---|
+| 1 | Realistic, editable target | small | none | built (branch `srnalla-resume-match-checks`) |
+| 2 | Readability (ATS) checks | small | none | built (same branch) |
+| 3 | Reword existing bullets, with approval | medium | 1 per proposal | planned |
+| 4 | Formatted preview and PDF download (old phase 3) | medium | none | planned |
+| 5 | Saved matches, history list, "Not me" remembered, link to the job tracker | medium | none | planned |
+| 6 | Skill gaps across all saved jobs | small | none | planned |
+| 7 | Tailored summary or cover letter | small | 1 per draft | planned |
+
+### 1. Realistic, editable target
+Why: Simplify suggests about 70% and Jobscan 75%, and both call it their own advice. A fixed 90% pushes people to add things they do not have, which is exactly what the honesty rule is against.
+Design: default target 80 (`config/default.json`); `POST /resume/matches` accepts `targetScore` (50 to 100); the screen has a target choice (70, 75, 80, 85, 90) next to the Score button and a line saying the score is feedback, not a prediction of an employer's system. Existing matches keep the target stored on them.
+
+### 2. Readability (ATS) checks
+Why: every competitor has some form of "can a machine read this". It costs no model calls.
+Design: `formatChecks.ts` runs seven checks on the text of the latest version (email, phone, standard headings, dates, bullet points, length 200 to 1000 words, no column or table look) and returns `{ id, ok, message }`. The view carries `formatChecks`; the screen shows the failing ones with the fix, or "all passed". Separate from the score. Limit to know: it checks the extracted text, not the PDF layout, so a two-column PDF shows up as odd spacing, not as "two columns".
+
+### 3. Reword existing bullets, with approval
+Why: the most common gap is "I have it, but not in their words" (a Partial). Simplify+ rewrites bullets to include keywords; we can do it with the guards.
+Design: new `POST /resume/matches/:id/reword` for Partial requirements the user picks. The model returns, per requirement, `{ line, reworded }` where `line` must be an exact existing line. Code refuses a reword that adds numbers, names (employers, tools) or skill names that are not in the original line, the requirement, or the user's note; keeps length within 1.3 times the original; and applies it only as a replacement of that one line. The screen shows old and new line side by side; accepting saves a new version through the existing versions endpoint (same `baseVersion` and re-score rules, including keep-the-better-result). Tests: no new fact slips in, a line that is not in the resume is refused.
+
+### 4. Formatted preview and PDF download
+Design: a clean, single-column preview rendered from the text (headings, bullets), a "Save as PDF" button using the browser's print dialog with a print stylesheet, so no PDF library and no server work. Later, optional `.docx` through a small library if people ask. Needs a rule for turning plain text into sections; reuse the heading detection from item 2.
+
+### 5. Saved matches and history
+Design: the tables already hold everything. Add a list screen (`GET /resume/matches` exists) with title, latest score and date, and reopen a match with its versions (`GET /resume/matches/:id`). Store "Not me" choices on the version (`confirmed` already exists; add a `declined` list). Optional link from a match to a `job_applications` row, which reverses the standalone decision; ask before doing it.
+
+### 6. Skill gaps across jobs
+Design: over the user's saved matches, count how often each missing requirement text appears (normalized), and show the top ones ("Kubernetes: missing in 6 of 8 jobs"). Computed from stored `results`, no model calls. Depends on 5.
+
+### 7. Tailored summary or cover letter
+Design: one model call that writes a short summary or letter from the final version's text, the job's requirements, and only the skills the user confirmed; the same guards as item 3 (no new numbers or names); shown for review and copied by the user, never sent or saved without a click.
+
+### Not planned
+A browser extension (Simplify's main strength) is a separate product with its own review and upkeep. Revisit only if the web page proves too slow a path.
