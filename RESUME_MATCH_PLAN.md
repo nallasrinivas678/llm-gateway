@@ -1,6 +1,6 @@
 # Plan: Resume match loop (TaskTide)
 
-Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 and 2 built on branch `srnalla-resume-match-checks`; items 3 to 7 planned below. 2026-11-19.
+Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 to 3 built on branch `srnalla-resume-match-checks`; items 4 to 7 planned below. 2026-11-19.
 
 ## Goal
 
@@ -85,7 +85,7 @@ Compared with Simplify and Jobscan (public help pages; Wonsulting could not be c
 |---|---|---|---|---|
 | 1 | Realistic, editable target | small | none | built (branch `srnalla-resume-match-checks`) |
 | 2 | Readability (ATS) checks | small | none | built (same branch) |
-| 3 | Reword existing bullets, with approval | medium | 1 per proposal | planned |
+| 3 | Reword existing bullets, with approval | medium | 1 per proposal | built (same branch) |
 | 4 | Formatted preview and PDF download (old phase 3) | medium | none | planned |
 | 5 | Saved matches, history list, "Not me" remembered, link to the job tracker | medium | none | planned |
 | 6 | Skill gaps across all saved jobs | small | none | planned |
@@ -99,9 +99,9 @@ Design: default target 80 (`config/default.json`); `POST /resume/matches` accept
 Why: every competitor has some form of "can a machine read this". It costs no model calls.
 Design: `formatChecks.ts` runs seven checks on the text of the latest version (email, phone, standard headings, dates, bullet points, length 200 to 1000 words, no column or table look) and returns `{ id, ok, message }`. The view carries `formatChecks`; the screen shows the failing ones with the fix, or "all passed". Separate from the score. Limit to know: it checks the extracted text, not the PDF layout, so a two-column PDF shows up as odd spacing, not as "two columns".
 
-### 3. Reword existing bullets, with approval
-Why: the most common gap is "I have it, but not in their words" (a Partial). Simplify+ rewrites bullets to include keywords; we can do it with the guards.
-Design: new `POST /resume/matches/:id/reword` for Partial requirements the user picks. The model returns, per requirement, `{ line, reworded }` where `line` must be an exact existing line. Code refuses a reword that adds numbers, names (employers, tools) or skill names that are not in the original line, the requirement, or the user's note; keeps length within 1.3 times the original; and applies it only as a replacement of that one line. The screen shows old and new line side by side; accepting saves a new version through the existing versions endpoint (same `baseVersion` and re-score rules, including keep-the-better-result). Tests: no new fact slips in, a line that is not in the resume is refused.
+### 3. Reword existing bullets, with approval (built)
+Why: the most common gap is "I have it, but not in their words" (a Partial). Simplify+ rewrites bullets to include keywords; we do it with guards.
+Built differently from the first sketch: no new endpoint. A Partial requirement the user marks "I have this" (with a note, as before) goes through the same `/rewrite` call. For those items the model is also given the existing line that partly shows the requirement, and may answer with a reworded version of that one line instead of a new bullet. Code (`rewrite.ts`) replaces only the line the evidence came from, keeps its bullet mark, and refuses the reword when it drops a number or name the line had, adds a number or name that is not in the user's own note or the original line (so a requirement's wording cannot smuggle in "AWS" over "Azure"), grows the line by more than half, or is the same line. A refused reword is listed under `skipped` and a new bullet is still used if the model gave one. The screen needed no change: the proposal view already highlights changed lines; accepting goes through the existing versions call.
 
 ### 4. Formatted preview and PDF download
 Design: a clean, single-column preview rendered from the text (headings, bullets), a "Save as PDF" button using the browser's print dialog with a print stylesheet, so no PDF library and no server work. Later, optional `.docx` through a small library if people ask. Needs a rule for turning plain text into sections; reuse the heading detection from item 2.

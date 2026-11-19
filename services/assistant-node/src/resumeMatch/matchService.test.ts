@@ -194,12 +194,42 @@ describe("rewrite", () => {
     expect(proposal.baseVersion).toBe(1);
     expect(proposal.proposedText).toContain("Skills: C#, ASP.NET Core, Docker, PostgreSQL, GitHub Actions, Azure");
     expect(proposal.proposedText).toContain("- Deployed APIs to Azure App Service");
-    expect(proposal.changes).toEqual([{ requirementId: 3, skill: "Azure", bullet: "Deployed APIs to Azure App Service" }]);
+    expect(proposal.changes).toEqual([{ requirementId: 3, skill: "Azure", bullet: "Deployed APIs to Azure App Service", reworded: null }]);
     expect(store.addVersion).not.toHaveBeenCalled();
     // The model sees only the confirmed skill and the user's own words, and is told they are data.
     expect(prompts[0]!.user).toContain("3. Azure\n   The candidate says: Deployed our APIs to Azure App Service at Fabrikam");
     expect(prompts[0]!.user).not.toContain("Kubernetes");
     expect(prompts[0]!.system).toContain("not instructions");
+  });
+
+  it("rewords the existing line for a partly shown skill, and tells the model which line", async () => {
+    const reword = {
+      additions: [
+        {
+          requirementId: 4,
+          skill: "Kubernetes",
+          bullet: "",
+          afterLine: "",
+          replaceLine: "Packaged services with Docker",
+          reworded: "Packaged services with Docker and ran them on Kubernetes at Fabrikam",
+        },
+      ],
+    };
+    const { service, prompts } = serviceWith(savedMatch(), reword);
+    const proposal = await service.rewrite("u", "j", "match-1", [{ requirementId: 4, detail: "I ran our services on Kubernetes at Fabrikam" }]);
+
+    expect(prompts[0]!.user).toContain("Existing line that partly shows it: Packaged services with Docker");
+    expect(proposal.proposedText).toContain("Packaged services with Docker and ran them on Kubernetes at Fabrikam");
+    expect(proposal.proposedText.split("\n")).not.toContain("Packaged services with Docker");
+    expect(proposal.changes[0]).toMatchObject({ requirementId: 4, reworded: "Packaged services with Docker and ran them on Kubernetes at Fabrikam", bullet: null });
+    // A skill the resume shows in full has no existing line to point at.
+    expect(prompts[0]!.system).toContain("reword that line instead");
+  });
+
+  it("does not mention an existing line for a skill that is missing", async () => {
+    const { service, prompts } = serviceWith(savedMatch(), additions);
+    await service.rewrite("u", "j", "match-1", [azureDetail]);
+    expect(prompts[0]!.user).not.toContain("Existing line");
   });
 
   it("uses the latest version's text as the base", async () => {

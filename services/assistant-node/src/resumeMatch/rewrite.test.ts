@@ -41,7 +41,7 @@ describe("applyAdditions", () => {
     // Everything that was there is still there, in order.
     const kept = text.split("\n").filter((l) => resume.split("\n").includes(l) || l === "C#, ASP.NET Core, Docker, Azure");
     expect(kept.length).toBe(resume.split("\n").length);
-    expect(changes).toEqual([{ requirementId: 3, skill: "Azure", bullet: "Deployed APIs to Azure App Service" }]);
+    expect(changes).toEqual([{ requirementId: 3, skill: "Azure", bullet: "Deployed APIs to Azure App Service", reworded: null }]);
     expect(skipped).toEqual([]);
   });
 
@@ -122,5 +122,74 @@ describe("applyAdditions", () => {
   it("strips a leading dash from the bullet and extra spaces", () => {
     const { text } = applyAdditions(resume, [{ ...azureAddition, bullet: "  -   Deployed APIs to   Azure App Service " }], [azure]);
     expect(text).toContain("\n- Deployed APIs to Azure App Service\n");
+  });
+});
+
+describe("rewording an existing line", () => {
+  const years: ConfirmedItem = {
+    requirementId: 5,
+    requirementText: "5+ years of C#",
+    detail: "I have used C# for 8 years at Fabrikam and Contoso",
+    evidence: "Wrote C# services",
+  };
+  const reword = (over: Partial<Addition> = {}): Addition => ({
+    requirementId: 5,
+    skill: "C#",
+    bullet: "",
+    afterLine: "",
+    replaceLine: "- Wrote C# services",
+    reworded: "Wrote C# services at Fabrikam and Contoso for 8 years",
+    ...over,
+  });
+  const run = (addition: Addition, item = years) => applyAdditions(resume, [addition], [item]);
+
+  it("replaces only that line, keeps its bullet and adds no new bullet", () => {
+    const { text, changes, skipped } = run(reword());
+    const lines = text.split("\n");
+    expect(lines).toContain("- Wrote C# services at Fabrikam and Contoso for 8 years");
+    expect(lines).not.toContain("- Wrote C# services");
+    expect(lines.length).toBe(resume.split("\n").length);
+    // Every other line is untouched.
+    expect(lines.filter((l) => !l.includes("Wrote C#"))).toEqual(resume.split("\n").filter((l) => !l.includes("Wrote C#")));
+    expect(changes[0]).toMatchObject({ requirementId: 5, bullet: null, reworded: "Wrote C# services at Fabrikam and Contoso for 8 years" });
+    expect(skipped).toEqual([]);
+  });
+
+  it("does not add a second bullet for a skill it reworded", () => {
+    const { text } = run(reword({ bullet: "Used C# for 8 years" }));
+    expect(text).not.toContain("- Used C# for 8 years");
+  });
+
+  it("refuses to change a line the evidence did not come from, and falls back to a bullet if there is one", () => {
+    const { text, skipped } = run(reword({ replaceLine: "Fabrikam - Senior Engineer, 2019-2026", reworded: "Fabrikam - Principal Engineer, 2019-2026", bullet: "Used C# for 8 years at Fabrikam" }));
+    expect(text).toContain("Fabrikam - Senior Engineer, 2019-2026");
+    expect(text).not.toContain("Principal");
+    expect(skipped).toEqual([{ requirementId: 5, reason: "the line to reword was not found in your resume" }]);
+    expect(text).toContain("- Used C# for 8 years at Fabrikam");
+  });
+
+  it("only rewords when the requirement has an existing partial line", () => {
+    const { text, skipped } = run(reword(), { ...years, evidence: undefined });
+    expect(text.split("\n")).toContain("- Wrote C# services");
+    expect(skipped).toEqual([]);
+  });
+
+  it.each([
+    ["swaps a tool for another", { requirementId: 4, replaceLine: "- Packaged services with Docker", reworded: "Packaged services with Kubernetes" }, "dropped a name"],
+    ["drops a number", { requirementId: 6, replaceLine: "- Built ASP.NET Core APIs serving 2M requests/day", reworded: "Built ASP.NET Core APIs for Fabrikam" }, "dropped a number"],
+    ["adds a name only the requirement has", { requirementId: 4, replaceLine: "- Packaged services with Docker", reworded: "Packaged services with Docker and Kubernetes" }, "named something you did not mention"],
+    ["adds a number the user did not give", { replaceLine: "- Wrote C# services", reworded: "Wrote C# services for 12 years at Fabrikam" }, "numbers you did not give"],
+    ["is the same line", { replaceLine: "- Wrote C# services", reworded: "wrote c# services" }, "same as your line"],
+    ["grows too much", { replaceLine: "- Wrote C# services", reworded: `Wrote C# services at Fabrikam and Contoso for 8 years${" and more".repeat(30)}` }, "too long"],
+  ])("refuses a reword that %s", (_label, override, reason) => {
+    const items: Record<number, ConfirmedItem> = {
+      4: { requirementId: 4, requirementText: "Kubernetes", detail: "I used containers every day at work", evidence: "Packaged services with Docker" },
+      5: years,
+      6: { requirementId: 6, requirementText: "High-traffic APIs", detail: "Our APIs were busy at Fabrikam", evidence: "Built ASP.NET Core APIs serving 2M requests/day" },
+    };
+    const id = (override as { requirementId?: number }).requirementId ?? 5;
+    const { text, skipped } = run(reword({ ...override, skill: "" }), items[id]!);
+    expect(text).toBe(resume);
+    expect(skipped).toEqual([{ requirementId: id, reason: expect.stringContaining(reason) }]);
   });
 });
