@@ -1,6 +1,6 @@
 # Plan: Resume match loop (TaskTide)
 
-Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 to 3 merged; items 4 to 8 planned below. 2026-11-19.
+Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 to 3 merged; items 4 to 8 planned below (8a and 8b built). 2026-11-19.
 
 ## Goal
 
@@ -90,7 +90,7 @@ Compared with Simplify and Jobscan (public help pages; Wonsulting could not be c
 | 5 | Saved matches, history list, "Not me" remembered, link to the job tracker | medium | none | planned |
 | 6 | Skill gaps across all saved jobs | small | none | planned |
 | 7 | Tailored summary or cover letter | small | 1 per draft | planned |
-| 8 | Clean AI traces from the final resume | small to medium | none | planned (plan below) |
+| 8 | Clean AI traces from the final resume | small to medium | none | 8a and 8b built; 8c to 8e planned (plan below) |
 
 ### 1. Realistic, editable target
 Why: Simplify suggests about 70% and Jobscan 75%, and both call it their own advice. A fixed 90% pushes people to add things they do not have, which is exactly what the honesty rule is against.

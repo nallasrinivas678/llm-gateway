@@ -75,6 +75,18 @@ describe("resume match service", () => {
     expect(view.formatChecks.map((c) => c.id)).toEqual(["email", "phone", "sections", "dates", "bullets", "length", "layout"]);
   });
 
+  it("saves the resume without hidden characters and returns the saved text", async () => {
+    const { generate } = scripted(requirementsAnswer, assessmentAnswer);
+    const { store, saved } = fakeStore();
+    const service = createMatchService({ generate, settings, openStore: () => store });
+    const dirty = resumeText.replace("Jane Doe", "Jane\u200B Doe").replace("Packaged services", "Packaged\u00A0services");
+
+    const view = await service.start({ userId: "u1", jwt: "jwt", resumeText: dirty, jobText });
+
+    expect(saved.first).toMatchObject({ resumeText });
+    expect(view.resumeText).toBe(resumeText);
+  });
+
   it("builds the requirements once, checks the resume, scores it in code and saves version 1", async () => {
     const { generate, prompts } = scripted(requirementsAnswer, assessmentAnswer);
     const { store, saved } = fakeStore();
@@ -293,6 +305,14 @@ describe("accept", () => {
     const view = await service.accept("u", "j", "match-1", { resumeText: edited, confirmed: [azureDetail], baseVersion: 1 });
     expect(view.results.map((r) => r.status)).toEqual(["met", "met", "met", "partial"]);
     expect(view.score).toBe(88);
+  });
+
+  it("strips hidden characters from the text the user accepts, and returns it", async () => {
+    const { service, store } = serviceWith(savedMatch(), reassess);
+    const view = await service.accept("u", "j", "match-1", { resumeText: edited.replace("Deployed", "Dep\u200Bloyed"), confirmed: [azureDetail], baseVersion: 1 });
+    expect(store.addVersion).toHaveBeenCalledWith("match-1", expect.objectContaining({ resumeText: edited }));
+    expect(view.resumeText).toBe(edited);
+    expect(view.resumeText).not.toMatch(/[\u200B\u00A0]/);
   });
 
   it("keeps a skill missing when the model's quote is not in the accepted text", async () => {

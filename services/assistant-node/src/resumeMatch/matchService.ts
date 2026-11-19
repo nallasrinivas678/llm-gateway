@@ -3,6 +3,7 @@
 // the user approves every change (that comes in phase 2).
 import { z } from "zod";
 import type { Settings } from "../config.js";
+import { stripHiddenChars } from "./cleanText.js";
 import { checkFormat, type FormatCheck } from "./formatChecks.js";
 import { MatchNotFoundError, ResumeInputError, VersionConflictError } from "./errors.js";
 import type { MatchStore, MatchSummary, StoredMatch, StoredVersion } from "./matchStore.js";
@@ -77,7 +78,9 @@ export interface MatchView {
   results: RequirementResult[];
   missing: Requirement[];
   reachedTarget: boolean;
-  // Readability of the latest version's text. Separate from the score.
+  // The text of the latest version, as saved (hidden characters removed).
+  resumeText: string;
+  // Readability of that text. Separate from the score.
   formatChecks: FormatCheck[];
 }
 
@@ -103,6 +106,7 @@ export function viewOf(match: StoredMatch, maxRewrites: number): MatchView {
     results,
     missing: openGaps(match.requirements, results),
     reachedTarget: score >= match.targetScore,
+    resumeText: latest?.resumeText ?? "",
     formatChecks: checkFormat(latest?.resumeText ?? ""),
   };
 }
@@ -124,6 +128,7 @@ const REWRITE_PROMPT = [
   "You help a candidate add skills they have confirmed to their resume. You do not rewrite the resume: for each confirmed skill, return one entry.",
   "skill: the skill or tool name, copied from the requirement or the candidate's words.",
   "bullet: one resume bullet, past tense, no leading dash, written only from what the candidate says. Never add numbers, employers, tools, dates or results they did not state. If their words do not support a bullet, return an empty string.",
+  "Write plain text only: straight quotes, a hyphen instead of a long dash, no special characters.",
   "afterLine: copy one existing line of the resume, exactly, where the bullet fits best (usually the job or project line it belongs to). Return an empty string if none fits.",
   "Some skills come with an existing resume line that only partly shows them. When the candidate's words add to what that same line already says (for example the number of years, or a detail of the same work), reword that line instead: replaceLine is the whole line copied exactly, reworded is the same line with the candidate's addition, and bullet is an empty string. Keep every number and name the line already has, and add only what the candidate said. If the candidate describes different work than that line, add a bullet instead and leave replaceLine and reworded empty.",
   UNTRUSTED,
@@ -220,7 +225,7 @@ export function createMatchService(deps: MatchServiceDeps) {
 
   return {
     async start(input: StartInput): Promise<MatchView> {
-      const resumeText = checkLength("resume", input.resumeText, limits.minResumeChars, limits.maxResumeChars);
+      const resumeText = stripHiddenChars(checkLength("resume", input.resumeText, limits.minResumeChars, limits.maxResumeChars));
       const jobText = checkLength("job description", input.jobText, limits.minJobChars, limits.maxJobChars);
 
       const { title, requirements } = await buildRequirements(jobText);
@@ -263,7 +268,7 @@ export function createMatchService(deps: MatchServiceDeps) {
       if (latest.version !== input.baseVersion) throw new VersionConflictError();
       if (latest.version > limits.maxRewrites) throw new ResumeInputError(`This match has reached its limit of ${limits.maxRewrites} rewrites.`);
 
-      const resumeText = checkLength("resume", input.resumeText, limits.minResumeChars, limits.maxResumeChars);
+      const resumeText = stripHiddenChars(checkLength("resume", input.resumeText, limits.minResumeChars, limits.maxResumeChars));
       if (resumeText === latest.resumeText) throw new ResumeInputError("There are no changes to save.");
       const confirmed = input.confirmed.map((c) => ({ requirementId: c.requirementId, detail: c.detail.trim() }));
 

@@ -41,6 +41,10 @@ describe("extractPdfText", () => {
 });
 
 describe("tidyText", () => {
+  it("removes hidden characters that PDF text can carry", () => {
+    expect(tidyText("Led a te\u200Bam of engi\u00ADneers\n\uFB01xed e\uFB03cient\u00A0code")).toBe("Led a team of engineers\nfixed efficient code");
+  });
+
   it("collapses spaces and blank lines but keeps line structure", () => {
     expect(tidyText("  a \t b \r\n\r\n\r\n\nc  d  ")).toBe("a b\n\nc d");
   });
