@@ -49,6 +49,25 @@ export function verifyResults(requirements: Requirement[], resumeText: string, r
   });
 }
 
+// A new version only adds lines, so a requirement that was met before should not slip because the
+// model judged it differently this time. Per requirement, keep the better of the earlier result and
+// the new one; an earlier result counts only if its quote is still in the text (the user may have
+// edited lines away).
+export function keepBest(
+  requirements: Requirement[],
+  resumeText: string,
+  previous: RequirementResult[],
+  current: RequirementResult[],
+): RequirementResult[] {
+  const stillValid = verifyResults(requirements, resumeText, previous);
+  return requirements.map((requirement) => {
+    const before = stillValid.find((r) => r.requirementId === requirement.id);
+    const now = current.find((r) => r.requirementId === requirement.id);
+    if (!now) return before ?? { requirementId: requirement.id, status: "missing", evidence: "" };
+    return before && CREDIT[before.status] > CREDIT[now.status] ? before : now;
+  });
+}
+
 // Must-haves count twice as much as nice-to-haves; partial earns half. 0 to 100, rounded.
 export function computeScore(requirements: Requirement[], results: RequirementResult[]): number {
   let earned = 0;

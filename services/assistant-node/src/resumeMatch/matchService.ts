@@ -6,7 +6,7 @@ import type { Settings } from "../config.js";
 import { MatchNotFoundError, ResumeInputError, VersionConflictError } from "./errors.js";
 import type { MatchStore, MatchSummary, StoredMatch, StoredVersion } from "./matchStore.js";
 import { applyAdditions, type AppliedChange, type ConfirmedItem, type SkippedChange } from "./rewrite.js";
-import { computeScore, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
+import { computeScore, keepBest, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
 
 // Asks the model for JSON in the given shape. Kept as a small function so tests can script answers.
 export type GenerateFn = <T>(schema: z.ZodType<T>, prompt: { name: string; system: string; user: string }) => Promise<T>;
@@ -250,8 +250,10 @@ export function createMatchService(deps: MatchServiceDeps) {
       if (resumeText === latest.resumeText) throw new ResumeInputError("There are no changes to save.");
       const confirmed = input.confirmed.map((c) => ({ requirementId: c.requirementId, detail: c.detail.trim() }));
 
-      const { results, score } = await assess(match.requirements, resumeText);
-      const next = { version: latest.version + 1, resumeText, score, results, confirmed };
+      const assessed = await assess(match.requirements, resumeText);
+      const results = keepBest(match.requirements, resumeText, latest.results, assessed.results);
+      const score = computeScore(match.requirements, results);
+      const next ={ version: latest.version + 1, resumeText, score, results, confirmed };
       await store.addVersion(matchId, next);
       return viewOf({ ...match, versions: [...match.versions, { ...next, createdAt: new Date().toISOString() }] }, limits.maxRewrites);
     },
