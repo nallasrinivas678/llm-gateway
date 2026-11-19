@@ -29,6 +29,33 @@ export const settingsSchema = z.object({
     llmMaxRetries: z.number().int().min(0),
     cacheTtlSeconds: positiveInt,
   }),
+  // Resume match: score a resume against a job description (uses chat.model).
+  resumeMatch: z
+    .object({
+      temperature: z.number().min(0).max(2),
+      maxPdfBytes: positiveInt,
+      maxPdfPages: positiveInt,
+      minResumeChars: positiveInt,
+      maxResumeChars: positiveInt,
+      minJobChars: positiveInt,
+      maxJobChars: positiveInt,
+      maxRequirements: positiveInt,
+      targetScore: z.number().int().min(1).max(100),
+      // How many accepted rewrites one match may have (so version 1 plus this many).
+      maxRewrites: positiveInt,
+      // The user's own words about where they used a skill (required before it can be added).
+      minDetailChars: positiveInt,
+      maxDetailChars: positiveInt,
+      llmTimeoutSeconds: positiveInt,
+      llmMaxRetries: z.number().int().min(0),
+      // Model-backed requests per user per minute.
+      requestsPerMinute: positiveInt,
+      jobFetch: z.object({ timeoutSeconds: positiveInt, maxBytes: positiveInt, maxRedirects: z.number().int().min(0) }),
+    })
+    .refine(
+      (r) => r.minResumeChars < r.maxResumeChars && r.minJobChars < r.maxJobChars && r.minDetailChars < r.maxDetailChars,
+      "min lengths must be below max lengths",
+    ),
   google: z.object({
     urls: z.object({
       calendarEvents: httpsUrl,

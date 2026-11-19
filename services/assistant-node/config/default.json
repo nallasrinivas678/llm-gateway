@@ -61,6 +61,28 @@
       "stateTtlSeconds": 600
     }
   },
+  "resumeMatch": {
+    "temperature": 0,
+    "maxPdfBytes": 5242880,
+    "maxPdfPages": 10,
+    "minResumeChars": 200,
+    "maxResumeChars": 20000,
+    "minJobChars": 200,
+    "maxJobChars": 20000,
+    "maxRequirements": 25,
+    "targetScore": 90,
+    "maxRewrites": 5,
+    "minDetailChars": 10,
+    "maxDetailChars": 500,
+    "llmTimeoutSeconds": 30,
+    "llmMaxRetries": 1,
+    "requestsPerMinute": 10,
+    "jobFetch": {
+      "timeoutSeconds": 10,
+      "maxBytes": 2000000,
+      "maxRedirects": 3
+    }
+  },
   "chat": {
     "model": "gemini-2.5-flash",
     "temperature": 0.2,

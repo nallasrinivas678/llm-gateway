@@ -9,11 +9,39 @@ import { createDailySummaryService, type DailySummaryService } from "./dailySumm
 import { createConnectService, type ConnectService } from "./google-oauth/connectService.js";
 import { createPgTokenStore } from "./google-tokens/pgTokenStore.js";
 import { createTokenService } from "./google-tokens/tokenService.js";
+import { createGenerate } from "./resumeMatch/generate.js";
+import { createMatchService, type MatchService } from "./resumeMatch/matchService.js";
+import { createSupabaseMatchStore } from "./resumeMatch/matchStore.js";
 
 export interface Services {
   chat?: ChatService;
   dailySummary?: DailySummaryService;
   googleConnect?: ConnectService;
+  resumeMatch?: MatchService;
+}
+
+// The user's own token goes to Supabase, so row-level security decides what they can see.
+function userClient(config: Config, anonKey: string, jwt: string) {
+  return createClient(config.SUPABASE_URL, anonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+// Resume match needs only the model and the public Supabase key (no Google account access).
+function buildResumeMatch(config: Config): MatchService | undefined {
+  const { GOOGLE_API_KEY, SUPABASE_ANON_KEY } = config;
+  if (!GOOGLE_API_KEY || !SUPABASE_ANON_KEY) return undefined;
+  const settings = config.settings.resumeMatch;
+  return createMatchService({
+    generate: createGenerate(
+      // maxRetries 0: createGenerate does the (bounded) retrying, so tries don't multiply.
+      new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: settings.temperature, maxRetries: 0 }),
+      { timeoutSeconds: settings.llmTimeoutSeconds, maxRetries: settings.llmMaxRetries },
+    ),
+    settings,
+    openStore: (userId, jwt) => createSupabaseMatchStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
+  });
 }
 
 // A service whose settings are missing is left out (and the missing names are logged), so the
@@ -23,11 +51,18 @@ export function buildServices(config: Config): Services {
   const missing = (required: Record<string, string | undefined>) =>
     Object.entries(required).filter(([, value]) => !value).map(([name]) => name);
 
-  // What both features need: Google tokens and the model.
+  const resumeMatch = buildResumeMatch(config);
+  const warnResume = () => {
+    if (!resumeMatch) console.warn(`Resume match is disabled. Missing settings: ${missing({ GOOGLE_API_KEY, SUPABASE_ANON_KEY }).join(", ")}`);
+  };
+  const withResume = (services: Services): Services => (resumeMatch ? { ...services, resumeMatch } : services);
+
+  // What chat and the daily summary need: Google tokens and the model.
   const shared = missing({ SUPABASE_DB_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY });
   if (shared.length > 0 || !SUPABASE_DB_URL || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_API_KEY) {
     console.warn(`Chat and daily summary are disabled. Missing settings: ${shared.join(", ")}`);
-    return {};
+    warnResume();
+    return withResume({});
   }
 
   const tokenStore = createPgTokenStore(SUPABASE_DB_URL);
@@ -62,22 +97,15 @@ export function buildServices(config: Config): Services {
   // Chat also needs the public Supabase key to read and write conversations as the user.
   if (!SUPABASE_ANON_KEY) {
     console.warn("Chat is disabled. Missing settings: SUPABASE_ANON_KEY");
-    return { dailySummary, googleConnect };
+    warnResume();
+    return withResume({ dailySummary, googleConnect });
   }
 
   const chat = createChatService({
     model: new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: config.settings.chat.temperature }),
     settings: config.settings,
     getGoogleToken,
-    // The user's own token goes to Supabase, so row-level security decides what they can see.
-    openStore: (userId, jwt) =>
-      createSupabaseConversationStore(
-        createClient(config.SUPABASE_URL, SUPABASE_ANON_KEY, {
-          global: { headers: { Authorization: `Bearer ${jwt}` } },
-          auth: { persistSession: false, autoRefreshToken: false },
-        }),
-        userId,
-      ),
+    openStore: (userId, jwt) => createSupabaseConversationStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
   });
-  return { chat, dailySummary, googleConnect };
+  return withResume({ chat, dailySummary, googleConnect });
 }

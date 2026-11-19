@@ -24,6 +24,7 @@
     "jose": "^6.2.17",
     "langchain": "^1.6.6",
     "pg": "^8.23.1",
+    "unpdf": "2.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
