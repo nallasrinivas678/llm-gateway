@@ -1,7 +1,8 @@
 // Turns the skills a user confirmed into edits to their resume. The model does not rewrite the
-// resume. It only suggests, per confirmed skill, a skill name, one bullet and the line to put the
-// bullet under. This file makes the edits itself, so the existing lines (employers, titles, dates)
-// cannot change, and refuses suggestions that bring in anything the user did not say.
+// resume. It only suggests, per confirmed skill, a skill name and either one new bullet (and the
+// line to put it under) or, for a requirement the resume only partly shows, a reworded version of
+// that one existing line. This file makes the edits itself, so every other line (employers, titles,
+// dates) cannot change, and refuses suggestions that bring in anything the user did not say.
 import { normalizeForMatch } from "./scoring.js";
 
 // What the model suggests for one confirmed requirement.
@@ -10,6 +11,9 @@ export interface Addition {
   skill: string;
   bullet: string;
   afterLine: string;
+  // Reword instead of add: an exact copy of the existing line, and the new wording for it.
+  replaceLine?: string;
+  reworded?: string;
 }
 
 // A requirement the user confirmed, with their own words about it.
@@ -17,12 +21,16 @@ export interface ConfirmedItem {
   requirementId: number;
   detail: string;
   requirementText: string;
+  // For a requirement the resume only partly shows: the resume text that partly shows it.
+  evidence?: string;
 }
 
 export interface AppliedChange {
   requirementId: number;
   skill: string | null;
   bullet: string | null;
+  // The new wording of an existing line, when that line was reworded.
+  reworded: string | null;
 }
 
 export interface SkippedChange {
@@ -37,6 +45,10 @@ const SKILLS_HEADING = /^(technical |core |key )?skills?:?$/i;
 const SKILLS_INLINE = /^(technical |core |key )?skills?\s*:/i;
 const ANY_HEADING = /^[A-Z][A-Z &/,-]+:?$/;
 const FALLBACK_HEADING = "ADDITIONAL EXPERIENCE";
+
+const BULLET_PREFIX = /^\s*[-•*▪●]\s*/;
+const REWORD_MAX_GROWTH = 1.5;
+const REWORD_MAX_EXTRA_CHARS = 80;
 
 const clean = (value: string) => value.replace(/\s+/g, " ").trim();
 
@@ -63,6 +75,45 @@ function bulletProblem(bullet: string, item: ConfirmedItem, resumeText: string):
   if (numbersIn(bullet).some((n) => !knownNumbers.has(n))) return "the suggested line had numbers you did not give";
   const known = `${given}\n${resumeText}`.toLowerCase();
   if (namesIn(bullet).some((name) => !known.includes(name.toLowerCase()))) return "the suggested line named something you did not mention";
+  return null;
+}
+
+// Why a reworded line cannot be used, or null when it is fine. Stricter than for a new bullet: the
+// line must keep every number and name it had, and anything new must come from the user's own words
+// (the requirement's wording is not enough, or "Azure" could be turned into "AWS").
+function rewordProblem(original: string, reworded: string, item: ConfirmedItem): string | null {
+  if (normalizeForMatch(reworded) === normalizeForMatch(original)) return "the reworded line was the same as your line";
+  if (reworded.length > MAX_BULLET_CHARS || reworded.length > Math.max(original.length * REWORD_MAX_GROWTH, original.length + REWORD_MAX_EXTRA_CHARS)) {
+    return "the reworded line was too long";
+  }
+  const keptNumbers = new Set(numbersIn(reworded));
+  if (numbersIn(original).some((n) => !keptNumbers.has(n))) return "the reworded line dropped a number from your line";
+  const rewordedLower = reworded.toLowerCase();
+  if (namesIn(original).some((name) => !rewordedLower.includes(name.toLowerCase()))) return "the reworded line dropped a name from your line";
+
+  const given = `${original}
+${item.detail}`;
+  const knownNumbers = new Set(numbersIn(given));
+  if (numbersIn(reworded).some((n) => !knownNumbers.has(n))) return "the reworded line had numbers you did not give";
+  const knownLower = given.toLowerCase();
+  if (namesIn(reworded).some((name) => !knownLower.includes(name.toLowerCase()))) return "the reworded line named something you did not mention";
+  return null;
+}
+
+// Replaces the line the requirement's evidence came from. Returns a reason when it cannot.
+function applyReword(lines: string[], item: ConfirmedItem, replaceLine: string, rewordedRaw: string): string | null {
+  const evidence = normalizeForMatch(item.evidence ?? "");
+  const bare = (text: string) => normalizeForMatch(text).replace(/^[-*]\s+/, "");
+  const wanted = bare(replaceLine);
+  // It must be an existing line that holds the evidence: no other line (employer, dates) can change.
+  const index = !evidence || !wanted ? -1 : lines.findIndex((line) => bare(line) === wanted && bare(line).includes(evidence));
+  if (index < 0) return "the line to reword was not found in your resume";
+
+  const original = lines[index]!.replace(BULLET_PREFIX, "").trim();
+  const reworded = clean(rewordedRaw).replace(BULLET_PREFIX, "");
+  const problem = rewordProblem(original, reworded, item);
+  if (problem) return problem;
+  lines[index] = `${BULLET_PREFIX.exec(lines[index]!)?.[0] ?? ""}${reworded}`;
   return null;
 }
 
@@ -133,7 +184,7 @@ export function applyAdditions(
     if (!item || done.has(item.requirementId)) continue;
     done.add(item.requirementId);
 
-    const change: AppliedChange = { requirementId: item.requirementId, skill: null, bullet: null };
+    const change: AppliedChange = { requirementId: item.requirementId, skill: null, bullet: null, reworded: null };
 
     // A skill name must come from the requirement or the user's own words.
     const skill = clean(addition.skill);
@@ -143,8 +194,20 @@ export function applyAdditions(
       if (!resumeLower.includes(skill.toLowerCase()) && !skills.some((s) => s.toLowerCase() === skill.toLowerCase())) skills.push(skill);
     }
 
+    // A reword replaces the existing line, so a new bullet for the same skill would repeat it.
+    const rewordedRaw = clean(addition.reworded ?? "");
+    let reworded = false;
+    if (rewordedRaw && item.evidence) {
+      const problem = applyReword(lines, item, addition.replaceLine ?? "", rewordedRaw);
+      if (problem) skipped.push({ requirementId: item.requirementId, reason: problem });
+      else {
+        change.reworded = clean(rewordedRaw).replace(BULLET_PREFIX, "");
+        reworded = true;
+      }
+    }
+
     const bullet = clean(addition.bullet).replace(/^[-•*▪●]\s*/, "");
-    if (bullet) {
+    if (bullet && !reworded) {
       const problem = bulletProblem(bullet, item, resumeText);
       if (problem) skipped.push({ requirementId: item.requirementId, reason: problem });
       else {

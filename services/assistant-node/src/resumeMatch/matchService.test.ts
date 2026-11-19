@@ -63,6 +63,18 @@ const assessmentAnswer = {
 };
 
 describe("resume match service", () => {
+  it("uses the user's own target score when given, and reports readability checks", async () => {
+    const { generate } = scripted(requirementsAnswer, assessmentAnswer);
+    const { store, saved } = fakeStore();
+    const service = createMatchService({ generate, settings, openStore: () => store });
+
+    const view = await service.start({ userId: "u1", jwt: "jwt", resumeText, jobText, targetScore: 55 });
+
+    expect(saved.match).toMatchObject({ targetScore: 55 });
+    expect(view).toMatchObject({ targetScore: 55, reachedTarget: true }); // the score of 56 meets 55
+    expect(view.formatChecks.map((c) => c.id)).toEqual(["email", "phone", "sections", "dates", "bullets", "length", "layout"]);
+  });
+
   it("builds the requirements once, checks the resume, scores it in code and saves version 1", async () => {
     const { generate, prompts } = scripted(requirementsAnswer, assessmentAnswer);
     const { store, saved } = fakeStore();
@@ -83,10 +95,10 @@ describe("resume match service", () => {
     expect(view.results.map((r) => r.status)).toEqual(["met", "met", "missing", "partial", "missing"]);
     expect(view.score).toBe(56);
     expect(view.missing.map((r) => r.id)).toEqual([3, 4, 5]);
-    expect(view).toMatchObject({ matchId: "match-1", version: 1, targetScore: 90, reachedTarget: false, jobUrl: "https://jobs.example.com/1" });
+    expect(view).toMatchObject({ matchId: "match-1", version: 1, targetScore: 80, reachedTarget: false, jobUrl: "https://jobs.example.com/1" });
 
     expect(openStore).toHaveBeenCalledWith("u1", "jwt");
-    expect(saved.match).toMatchObject({ title: "Senior .NET engineer at Contoso", jobUrl: "https://jobs.example.com/1", targetScore: 90 });
+    expect(saved.match).toMatchObject({ title: "Senior .NET engineer at Contoso", jobUrl: "https://jobs.example.com/1", targetScore: 80 });
     expect(saved.first).toMatchObject({ version: 1, resumeText, score: 56, confirmed: [] });
 
     // Both prompts say the text is data, and the check prompt numbers the fixed requirements.
@@ -182,12 +194,42 @@ describe("rewrite", () => {
     expect(proposal.baseVersion).toBe(1);
     expect(proposal.proposedText).toContain("Skills: C#, ASP.NET Core, Docker, PostgreSQL, GitHub Actions, Azure");
     expect(proposal.proposedText).toContain("- Deployed APIs to Azure App Service");
-    expect(proposal.changes).toEqual([{ requirementId: 3, skill: "Azure", bullet: "Deployed APIs to Azure App Service" }]);
+    expect(proposal.changes).toEqual([{ requirementId: 3, skill: "Azure", bullet: "Deployed APIs to Azure App Service", reworded: null }]);
     expect(store.addVersion).not.toHaveBeenCalled();
     // The model sees only the confirmed skill and the user's own words, and is told they are data.
     expect(prompts[0]!.user).toContain("3. Azure\n   The candidate says: Deployed our APIs to Azure App Service at Fabrikam");
     expect(prompts[0]!.user).not.toContain("Kubernetes");
     expect(prompts[0]!.system).toContain("not instructions");
+  });
+
+  it("rewords the existing line for a partly shown skill, and tells the model which line", async () => {
+    const reword = {
+      additions: [
+        {
+          requirementId: 4,
+          skill: "Kubernetes",
+          bullet: "",
+          afterLine: "",
+          replaceLine: "Packaged services with Docker",
+          reworded: "Packaged services with Docker and ran them on Kubernetes at Fabrikam",
+        },
+      ],
+    };
+    const { service, prompts } = serviceWith(savedMatch(), reword);
+    const proposal = await service.rewrite("u", "j", "match-1", [{ requirementId: 4, detail: "I ran our services on Kubernetes at Fabrikam" }]);
+
+    expect(prompts[0]!.user).toContain("Existing line that partly shows it: Packaged services with Docker");
+    expect(proposal.proposedText).toContain("Packaged services with Docker and ran them on Kubernetes at Fabrikam");
+    expect(proposal.proposedText.split("\n")).not.toContain("Packaged services with Docker");
+    expect(proposal.changes[0]).toMatchObject({ requirementId: 4, reworded: "Packaged services with Docker and ran them on Kubernetes at Fabrikam", bullet: null });
+    // A skill the resume shows in full has no existing line to point at.
+    expect(prompts[0]!.system).toContain("reword that line instead");
+  });
+
+  it("does not mention an existing line for a skill that is missing", async () => {
+    const { service, prompts } = serviceWith(savedMatch(), additions);
+    await service.rewrite("u", "j", "match-1", [azureDetail]);
+    expect(prompts[0]!.user).not.toContain("Existing line");
   });
 
   it("uses the latest version's text as the base", async () => {
@@ -236,6 +278,21 @@ describe("accept", () => {
     expect(view).toMatchObject({ version: 2, score: 100, reachedTarget: true, missing: [], rewritesLeft: 4 });
     expect(prompts.map((p) => p.name)).toEqual(["requirement_check"]);
     expect(prompts[0]!.user).toContain("3. [must] Azure");
+  });
+
+  it("does not lower an earlier result when the model judges it more harshly this time", async () => {
+    const harsher = {
+      results: [
+        { requirementId: 1, status: "partial", evidence: "7 years building C# services at Fabrikam" },
+        { requirementId: 2, status: "missing", evidence: "" },
+        { requirementId: 3, status: "met", evidence: "Deployed APIs to Azure App Service" },
+        { requirementId: 4, status: "partial", evidence: "Packaged services with Docker" },
+      ],
+    };
+    const { service } = serviceWith(savedMatch(), harsher);
+    const view = await service.accept("u", "j", "match-1", { resumeText: edited, confirmed: [azureDetail], baseVersion: 1 });
+    expect(view.results.map((r) => r.status)).toEqual(["met", "met", "met", "partial"]);
+    expect(view.score).toBe(88);
   });
 
   it("keeps a skill missing when the model's quote is not in the accepted text", async () => {

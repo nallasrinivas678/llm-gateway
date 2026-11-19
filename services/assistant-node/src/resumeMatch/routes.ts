@@ -60,6 +60,7 @@ export function createResumeRoutes(config: Config, service: MatchService | undef
     resumeText: z.string(),
     jobText: z.string(),
     jobUrl: z.string().url().max(2000).optional(),
+    targetScore: z.number().int().min(50).max(100).optional(),
   });
 
   routes.post("/matches", async (c) => {

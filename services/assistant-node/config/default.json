@@ -70,7 +70,7 @@
     "minJobChars": 200,
     "maxJobChars": 20000,
     "maxRequirements": 25,
-    "targetScore": 90,
+    "targetScore": 80,
     "maxRewrites": 5,
     "minDetailChars": 10,
     "maxDetailChars": 500,

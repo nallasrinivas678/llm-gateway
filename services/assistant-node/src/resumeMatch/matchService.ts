@@ -3,10 +3,11 @@
 // the user approves every change (that comes in phase 2).
 import { z } from "zod";
 import type { Settings } from "../config.js";
+import { checkFormat, type FormatCheck } from "./formatChecks.js";
 import { MatchNotFoundError, ResumeInputError, VersionConflictError } from "./errors.js";
 import type { MatchStore, MatchSummary, StoredMatch, StoredVersion } from "./matchStore.js";
 import { applyAdditions, type AppliedChange, type ConfirmedItem, type SkippedChange } from "./rewrite.js";
-import { computeScore, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
+import { computeScore, keepBest, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
 
 // Asks the model for JSON in the given shape. Kept as a small function so tests can script answers.
 export type GenerateFn = <T>(schema: z.ZodType<T>, prompt: { name: string; system: string; user: string }) => Promise<T>;
@@ -59,6 +60,8 @@ export interface StartInput {
   resumeText: string;
   jobText: string;
   jobUrl?: string;
+  // The user's own target; the configured default applies when left out.
+  targetScore?: number;
 }
 
 export interface MatchView {
@@ -74,6 +77,8 @@ export interface MatchView {
   results: RequirementResult[];
   missing: Requirement[];
   reachedTarget: boolean;
+  // Readability of the latest version's text. Separate from the score.
+  formatChecks: FormatCheck[];
 }
 
 export interface MatchServiceDeps {
@@ -98,6 +103,7 @@ export function viewOf(match: StoredMatch, maxRewrites: number): MatchView {
     results,
     missing: openGaps(match.requirements, results),
     reachedTarget: score >= match.targetScore,
+    formatChecks: checkFormat(latest?.resumeText ?? ""),
   };
 }
 
@@ -108,6 +114,8 @@ const rewriteSchema = z.object({
       skill: z.string().describe("The skill or tool name, as written in the requirement or the candidate's words"),
       bullet: z.string().describe("One resume bullet from the candidate's own words; empty when their words do not support one"),
       afterLine: z.string().describe("An exact copy of one existing resume line the bullet fits under; empty when none fits"),
+      replaceLine: z.string().describe("Only for a skill with an existing partial line: an exact copy of that whole line; otherwise empty"),
+      reworded: z.string().describe("Only with replaceLine: that same line reworded to show the skill; otherwise empty"),
     }),
   ),
 });
@@ -117,6 +125,7 @@ const REWRITE_PROMPT = [
   "skill: the skill or tool name, copied from the requirement or the candidate's words.",
   "bullet: one resume bullet, past tense, no leading dash, written only from what the candidate says. Never add numbers, employers, tools, dates or results they did not state. If their words do not support a bullet, return an empty string.",
   "afterLine: copy one existing line of the resume, exactly, where the bullet fits best (usually the job or project line it belongs to). Return an empty string if none fits.",
+  "Some skills come with an existing resume line that only partly shows them. When the candidate's words add to what that same line already says (for example the number of years, or a detail of the same work), reword that line instead: replaceLine is the whole line copied exactly, reworded is the same line with the candidate's addition, and bullet is an empty string. Keep every number and name the line already has, and add only what the candidate said. If the candidate describes different work than that line, add a bullet instead and leave replaceLine and reworded empty.",
   UNTRUSTED,
 ].join("\n");
 
@@ -163,7 +172,13 @@ export function createMatchService(deps: MatchServiceDeps) {
       if (detail.length < limits.minDetailChars || detail.length > limits.maxDetailChars) {
         throw new ResumeInputError(`Describe where you used "${requirement.text}" in ${limits.minDetailChars} to ${limits.maxDetailChars} characters.`);
       }
-      return { requirementId: requirement.id, detail, requirementText: requirement.text };
+      const existing = latest.results.find((r) => r.requirementId === requirement.id);
+      return {
+        requirementId: requirement.id,
+        detail,
+        requirementText: requirement.text,
+        ...(existing?.status === "partial" && existing.evidence ? { evidence: existing.evidence } : {}),
+      };
     });
   }
 
@@ -212,7 +227,7 @@ export function createMatchService(deps: MatchServiceDeps) {
       const { results, score } = await assess(requirements, resumeText);
 
       const store = deps.openStore(input.userId, input.jwt);
-      const match = { title, jobUrl: input.jobUrl ?? null, jobText, requirements, targetScore: limits.targetScore };
+      const match = { title, jobUrl: input.jobUrl ?? null, jobText, requirements, targetScore: input.targetScore ?? limits.targetScore };
       const matchId = await store.createMatch(match, { version: 1, resumeText, score, results, confirmed: [] });
       const createdAt = new Date().toISOString();
       return viewOf({ ...match, id: matchId, createdAt, versions: [{ version: 1, resumeText, score, results, confirmed: [], createdAt }] }, limits.maxRewrites);
@@ -225,7 +240,9 @@ export function createMatchService(deps: MatchServiceDeps) {
       const latest = latestOf(match);
       const confirmed = checkConfirmations(match, latest, items);
 
-      const list = confirmed.map((c) => `${c.requirementId}. ${c.requirementText}\n   The candidate says: ${c.detail}`).join("\n");
+      const list = confirmed
+        .map((c) => `${c.requirementId}. ${c.requirementText}\n   The candidate says: ${c.detail}${c.evidence ? `\n   Existing line that partly shows it: ${c.evidence}` : ""}`)
+        .join("\n");
       const answer = await deps.generate(rewriteSchema, {
         name: "resume_additions",
         system: REWRITE_PROMPT,
@@ -250,8 +267,10 @@ export function createMatchService(deps: MatchServiceDeps) {
       if (resumeText === latest.resumeText) throw new ResumeInputError("There are no changes to save.");
       const confirmed = input.confirmed.map((c) => ({ requirementId: c.requirementId, detail: c.detail.trim() }));
 
-      const { results, score } = await assess(match.requirements, resumeText);
-      const next = { version: latest.version + 1, resumeText, score, results, confirmed };
+      const assessed = await assess(match.requirements, resumeText);
+      const results = keepBest(match.requirements, resumeText, latest.results, assessed.results);
+      const score = computeScore(match.requirements, results);
+      const next ={ version: latest.version + 1, resumeText, score, results, confirmed };
       await store.addVersion(matchId, next);
       return viewOf({ ...match, versions: [...match.versions, { ...next, createdAt: new Date().toISOString() }] }, limits.maxRewrites);
     },
