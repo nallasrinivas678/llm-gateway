@@ -7,6 +7,7 @@ import { ConversationNotFoundError } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
 import { GoogleConnectError, InvalidStateError } from "./google-oauth/connectService.js";
+import { createResumeRoutes } from "./resumeMatch/routes.js";
 import type { Services } from "./wiring.js";
 
 export function createApp(config: Config, services: Services = {}) {
@@ -114,6 +115,7 @@ export function createApp(config: Config, services: Services = {}) {
   });
 
   app.route("/auth/google", googleAuth);
+  app.route("/resume", createResumeRoutes(config, services.resumeMatch));
   app.route("/assistant", assistant);
 
   return app;

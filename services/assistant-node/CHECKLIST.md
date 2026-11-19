@@ -82,8 +82,9 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [ ] **(you)** Rotate the Google client secret and the old `postgres` database password. Both were shown in a working session. Recommended, not urgent if that session is private.
 - [ ] Verify Supabase's TLS certificate (today the connection is encrypted but the certificate is not checked)
 - [x] Forgeable `state` fixed in the Node connect flow (the .NET flow still has the old `state` until the web app switches over)
-- [ ] **(you)** Switch Connect Google to Node: apply the insert migration, add the redirect address `https://tasktide.app/app/google/callback` to the OAuth client in the Google Cloud console, set `GOOGLE_REDIRECT_URI` on Fly, set `VITE_GOOGLE_CONNECT_API_URL` in Vercel, then reconnect once (this also adds the `gmail.compose` permission that drafts need)
-- [ ] Live test of the whole connect flow with a real Google account (needs the steps above)
+- [x] **(you)** Switch Connect Google to Node (done 2026-11-18): apply the insert migration, add the redirect address `https://tasktide.app/app/google/callback` to the OAuth client in the Google Cloud console, set `GOOGLE_REDIRECT_URI` on Fly, set `VITE_GOOGLE_CONNECT_API_URL` in Vercel, then reconnect once (this also adds the `gmail.compose` permission that drafts need)
+- [x] Live test of the whole connect flow with a real Google account (2026-11-18): new row saved with `calendar`, `documents`, `gmail.readonly`, `gmail.compose` and a refresh token; Dashboard summary loaded afterwards. Note: the summary cache is per machine and lasts 15 minutes, so a disconnected user can still see a cached summary until it expires or the machine restarts.
+- [ ] Live test of the write tools (`create_event`, `create_draft`, `append_to_doc`, `read_doc`); needs the chat endpoint, which the web app has no screen for yet
 - [ ] Google tokens are stored as plain text; consider encrypting or Supabase Vault
 - [ ] Timeouts on every outside call; structured logs without personal content
 - [ ] `npm audit`, then ESLint and Prettier before a second developer joins

@@ -60,6 +60,23 @@ describe("buildServices", () => {
     expect(withRedirect.chat).toBeDefined();
   });
 
+  it("builds resume match with only the model key and the public Supabase key", () => {
+    const services = buildServices(loadConfig({ ...base, GOOGLE_API_KEY: "api-key", SUPABASE_ANON_KEY: "anon-key" }));
+    expect(Object.keys(services)).toEqual(["resumeMatch"]);
+    expect(allWarnings()).not.toContain("Resume match is disabled");
+  });
+
+  it("names what resume match is missing", () => {
+    const services = buildServices(loadConfig({ ...base, ...dbAndGoogle }));
+    expect(services.resumeMatch).toBeUndefined();
+    expect(allWarnings()).toContain("Resume match is disabled. Missing settings: SUPABASE_ANON_KEY");
+  });
+
+  it("builds everything including resume match when everything is set", () => {
+    const services = buildServices(loadConfig({ ...base, ...dbAndGoogle, SUPABASE_ANON_KEY: "anon-key" }));
+    expect(services.resumeMatch).toBeDefined();
+  });
+
   it("builds nothing when one of the shared settings is missing", () => {
     const { GOOGLE_API_KEY: _omitted, ...withoutKey } = dbAndGoogle;
     expect(buildServices(loadConfig({ ...base, ...withoutKey, SUPABASE_ANON_KEY: "anon-key" }))).toEqual({});

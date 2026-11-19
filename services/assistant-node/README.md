@@ -209,6 +209,21 @@ Differences from .NET, on purpose:
 - It asks for `calendar`, `gmail.readonly`, `gmail.compose` and `documents` (in `config/default.json`). `gmail.compose` is what creating a draft needs; `gmail.send` alone cannot create one, and nothing here sends mail. **A user who connected through .NET has `gmail.send` but not `gmail.compose`, so draft creation fails for them until they reconnect.**
 - Saving a first connection needs the database login to be able to insert, which is `supabase/migrations/20261118000000_assistant_tokens_insert.sql` (it still cannot delete).
 
+## Resume match endpoints (phases 1 and 2: score, then add confirmed skills)
+
+Scores a resume against a job description. Plan and design: `RESUME_MATCH_PLAN.md` at the repo root. Code in `src/resumeMatch`. Needs `GOOGLE_API_KEY` and `SUPABASE_ANON_KEY`, and the tables from `supabase/migrations/20261119000000_resume_match.sql`. All routes need the login token header; errors carry a `detail`.
+
+- `POST /resume/extract`: multipart upload, field `file`, a PDF of at most 5 MB and 10 pages. Returns `{ text }`. `400` explains a file that is not a PDF, damaged, or a scan with no text; `413` for an upload that is too large.
+- `POST /resume/job-text`: `{ url }` returns `{ text }`, or `422` asking the user to paste the text when the page can't be read (common: LinkedIn and many job boards block automated reading). Private and internal addresses are refused, and every redirect is checked.
+- `POST /resume/matches`: `{ resumeText, jobText, jobUrl? }`. The model turns the job into a fixed list of requirements (must or nice), then marks each met, partial or missing with a quote from the resume. Code checks each quote is really in the resume (otherwise the item counts as missing) and computes the score: must counts 2, nice 1, partial half. Saves version 1 and returns `{ matchId, title, requirements, results, score, missing, targetScore, reachedTarget, version }`. `429` above 10 requests a minute per user; `503` when the model's usage limit is reached.
+- `GET /resume/matches` lists the user's matches with the latest score; `GET /resume/matches/:id` returns one with every version.
+- `POST /resume/matches/:id/rewrite`: `{ confirmed: [{ requirementId, detail }] }`, the skills the user says they have, each with their own words (10 to 500 characters). Returns `{ baseVersion, proposedText, changes, skipped }` and saves nothing. The model does not rewrite the resume: per skill it suggests only a skill name, one bullet and the line to put it under, and code makes the edits (`rewrite.ts`). Existing lines cannot change. A suggestion is refused when the skill name is not in the requirement or the user's words, or when a bullet has numbers or names (employers, tools) the user did not give; `skipped` says which and why.
+- `POST /resume/matches/:id/versions`: `{ resumeText, confirmed, baseVersion }`, the text the user accepted (as suggested or edited). Checks `baseVersion` is the latest (`409` if not), scores the text again against the same requirements, saves it as the next version and returns the new view. At most 5 rewrites per match (`maxRewrites`); `rewritesLeft` in the view says how many remain.
+
+Whether the loop is finished is decided by the web app from the view: `reachedTarget`, `rewritesLeft` of 0, or every remaining gap marked "Not me" by the user (those choices are not saved).
+
+The resume and job text are sent to the model as data, never as instructions, and are never logged. Limits are in `config/default.json` under `resumeMatch`. Known gap: the address check runs before the request, so a host whose DNS answer changes between the check and the request (DNS rebinding) is not caught.
+
 ## What is an MCP server here?
 
 An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
