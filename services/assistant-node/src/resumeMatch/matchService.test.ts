@@ -238,6 +238,21 @@ describe("accept", () => {
     expect(prompts[0]!.user).toContain("3. [must] Azure");
   });
 
+  it("does not lower an earlier result when the model judges it more harshly this time", async () => {
+    const harsher = {
+      results: [
+        { requirementId: 1, status: "partial", evidence: "7 years building C# services at Fabrikam" },
+        { requirementId: 2, status: "missing", evidence: "" },
+        { requirementId: 3, status: "met", evidence: "Deployed APIs to Azure App Service" },
+        { requirementId: 4, status: "partial", evidence: "Packaged services with Docker" },
+      ],
+    };
+    const { service } = serviceWith(savedMatch(), harsher);
+    const view = await service.accept("u", "j", "match-1", { resumeText: edited, confirmed: [azureDetail], baseVersion: 1 });
+    expect(view.results.map((r) => r.status)).toEqual(["met", "met", "met", "partial"]);
+    expect(view.score).toBe(88);
+  });
+
   it("keeps a skill missing when the model's quote is not in the accepted text", async () => {
     const lying = { results: [...reassess.results.slice(0, 2), { requirementId: 3, status: "met", evidence: "Led our Azure migration" }, reassess.results[3]] };
     const { service } = serviceWith(savedMatch(), lying);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeScore, normalizeForMatch, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
+import { computeScore, keepBest, normalizeForMatch, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
 
 const requirements: Requirement[] = [
   { id: 1, text: "5+ years C#", kind: "must" },
@@ -37,6 +37,34 @@ describe("verifyResults", () => {
   it("drops results for ids that are not requirements", () => {
     const results = verifyResults(requirements, resume, [{ requirementId: 99, status: "met", evidence: "Jane Doe" }]);
     expect(results.map((r) => r.requirementId)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("keepBest", () => {
+  const before: RequirementResult[] = [
+    { requirementId: 1, status: "met", evidence: "7 years building C# services" },
+    { requirementId: 2, status: "partial", evidence: "Azure thing that was edited away" },
+    { requirementId: 3, status: "missing", evidence: "" },
+    { requirementId: 4, status: "missing", evidence: "" },
+  ];
+
+  it("does not let a requirement slip, and takes upgrades", () => {
+    const now: RequirementResult[] = [
+      { requirementId: 1, status: "partial", evidence: "7 years building C# services" },
+      { requirementId: 2, status: "missing", evidence: "" },
+      { requirementId: 3, status: "met", evidence: "Packaged services with Docker – shipped weekly" },
+      { requirementId: 4, status: "missing", evidence: "" },
+    ];
+    const kept = keepBest(requirements, resume, before, now);
+    expect(kept[0]).toEqual(before[0]); // met stays met
+    expect(kept[1]).toEqual(now[1]); // earlier quote is gone from the text, so it no longer counts
+    expect(kept[2]).toEqual(now[2]); // improvement is taken
+  });
+
+  it("fills a requirement the model left out from the earlier result", () => {
+    const kept = keepBest(requirements, resume, before, []);
+    expect(kept[0]).toEqual(before[0]);
+    expect(kept[3]).toEqual({ requirementId: 4, status: "missing", evidence: "" });
   });
 });
 
