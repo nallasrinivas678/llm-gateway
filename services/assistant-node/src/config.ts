@@ -56,6 +56,27 @@ export const settingsSchema = z.object({
       (r) => r.minResumeChars < r.maxResumeChars && r.minJobChars < r.maxJobChars && r.minDetailChars < r.maxDetailChars,
       "min lengths must be below max lengths",
     ),
+  // PDF Q&A: ingest a PDF into searchable chunks and answer questions from them (uses chat.model).
+  docQa: z.object({
+    embeddingModel: z.string().min(1),
+    // Must match document_chunks.embedding (vector(1536)) in the database.
+    embeddingDimensions: positiveInt,
+    embeddingTimeoutSeconds: positiveInt,
+    chunkChars: positiveInt,
+    chunkOverlapChars: z.number().int().min(0),
+    maxPages: positiveInt,
+    maxPdfBytes: positiveInt,
+    // Below this much text in total we assume a scan with no text layer.
+    minTextChars: positiveInt,
+    maxQuestionChars: positiveInt,
+    // How many chunks to retrieve, and the cosine similarity below which a chunk is not used.
+    topK: positiveInt,
+    minSimilarity: z.number().min(0).max(1),
+    temperature: z.number().min(0).max(2),
+    llmTimeoutSeconds: positiveInt,
+    llmMaxRetries: z.number().int().min(0),
+    questionsPerMinute: positiveInt,
+  }),
   google: z.object({
     urls: z.object({
       calendarEvents: httpsUrl,

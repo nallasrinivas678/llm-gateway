@@ -224,6 +224,17 @@ Whether the loop is finished is decided by the web app from the view: `reachedTa
 
 The resume and job text are sent to the model as data, never as instructions, and are never logged. Limits are in `config/default.json` under `resumeMatch`. Known gap: the address check runs before the request, so a host whose DNS answer changes between the check and the request (DNS rebinding) is not caught.
 
+## PDF Q&A endpoints
+
+Same paths, bodies and status codes as the .NET service, behind the same login. The database is unchanged (`documents`, `document_chunks`, `doc_messages`, `match_chunks`, the private `documents` bucket). Every query runs as the signed-in user with the user's own token, so row-level security and the storage policies apply. Needs `GOOGLE_API_KEY` and `SUPABASE_ANON_KEY`; settings are in the `docQa` block of `config/default.json`.
+
+- `POST /assistant/docs` with `{ "documentId": "<uuid>" }`: starts ingest in the background and returns **202**. The web app watches `documents.status` (`processing`, then `ready` or `failed` with a readable `error`). 404 when the document is not the caller's; 409 while it is already being processed on this machine. Calling it again re-runs ingest, which also retries a document left `processing` by a restart.
+- `POST /assistant/docs/ask` with `{ "documentId", "question" }` (question 1 to 1000 characters): returns `{ answer, sources: [{ page, snippet }] }`. 404 not the caller's, 409 not ready, 429 over 10 questions a minute, 503 model quota used up, 502 otherwise.
+
+How it works: ingest downloads the PDF, reads the text of each page (`unpdf`; hidden characters removed), cuts it into 2400-character chunks with 300 overlap that never cross a page, embeds them (`gemini-embedding-001`, 1536 numbers each) and saves them. A PDF with no text layer, more than 200 pages or over 20 MB fails with a readable message. Ask embeds the question, takes the 6 closest chunks, drops those below similarity 0.55 and, when none is left, answers "I couldn't find that in this document." without calling the model. Otherwise the model answers from those chunks only, citing pages, and only the sources for the pages it cited are returned. The question and answer are saved in `doc_messages` (a failure to save does not lose the answer).
+
+Known limits: the chunks are replaced with a delete and then inserts, not one transaction (a failure leaves the document `failed` and re-running fixes it); the "already running" check is per machine, so keep one Fly machine.
+
 ## What is an MCP server here?
 
 An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:

@@ -5,7 +5,7 @@ Goals, in order:
 1. **Migrate PDF Q&A from the .NET assistant to `services/assistant-node`** (step M, below), with the same behaviour and API, so the Node service can replace .NET for this feature.
 2. **Add a small, repeatable test of the AI part** (steps E0 to E5), so that choices like the similarity floor, number of chunks, chunk size and prompt are made from numbers, not guesses. It covers the "evaluation set first" item in `services/assistant-node/CHECKLIST.md` section 6, and can also run the same questions against the .NET service (checklist section 9).
 
-Status: plan only. PDF Q&A is not built in Node yet; the .NET version (`src/LlmGateway.Assistant/Docs`) is the reference. Its settings today: chunks of 2400 characters with 300 overlap, top 6, similarity floor 0.55 (in `appsettings`; the C# default is 0.5), temperature 0.2, `gemini-embedding-001` at 1536 dimensions.
+Status: M1 to M4 and M6 are built (see `services/assistant-node/src/docQa`, README section "PDF Q&A endpoints"), tested with fakes; M5 (live check) and the evals are still to do. Before M, PDF Q&A was not built in Node; the .NET version (`src/LlmGateway.Assistant/Docs`) is the reference. Its settings today: chunks of 2400 characters with 300 overlap, top 6, similarity floor 0.55 (in `appsettings`; the C# default is 0.5), temperature 0.2, `gemini-embedding-001` at 1536 dimensions.
 
 ## Step M: migrate PDF Q&A to Node (first)
 

@@ -62,7 +62,7 @@ describe("buildServices", () => {
 
   it("builds resume match with only the model key and the public Supabase key", () => {
     const services = buildServices(loadConfig({ ...base, GOOGLE_API_KEY: "api-key", SUPABASE_ANON_KEY: "anon-key" }));
-    expect(Object.keys(services)).toEqual(["resumeMatch"]);
+    expect(Object.keys(services)).toEqual(["resumeMatch", "docQa"]);
     expect(allWarnings()).not.toContain("Resume match is disabled");
   });
 
@@ -75,6 +75,14 @@ describe("buildServices", () => {
   it("builds everything including resume match when everything is set", () => {
     const services = buildServices(loadConfig({ ...base, ...dbAndGoogle, SUPABASE_ANON_KEY: "anon-key" }));
     expect(services.resumeMatch).toBeDefined();
+  });
+
+  it("builds PDF Q&A with only the model key and the public Supabase key, and names what is missing", () => {
+    expect(buildServices(loadConfig({ ...base, GOOGLE_API_KEY: "api-key", SUPABASE_ANON_KEY: "anon-key" })).docQa).toBeDefined();
+    expect(allWarnings()).not.toContain("PDF Q&A is disabled");
+
+    expect(buildServices(loadConfig({ ...base, GOOGLE_API_KEY: "api-key" })).docQa).toBeUndefined();
+    expect(allWarnings()).toContain("PDF Q&A is disabled. Missing settings: SUPABASE_ANON_KEY");
   });
 
   it("builds nothing when one of the shared settings is missing", () => {

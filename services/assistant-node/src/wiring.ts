@@ -9,6 +9,11 @@ import { createDailySummaryService, type DailySummaryService } from "./dailySumm
 import { createConnectService, type ConnectService } from "./google-oauth/connectService.js";
 import { createPgTokenStore } from "./google-tokens/pgTokenStore.js";
 import { createTokenService } from "./google-tokens/tokenService.js";
+import { createAnswer, createAskService } from "./docQa/ask.js";
+import { createEmbedder } from "./docQa/embeddings.js";
+import { createIngestService } from "./docQa/ingest.js";
+import type { DocServices } from "./docQa/routes.js";
+import { createSupabaseDocStore } from "./docQa/store.js";
 import { createGenerate } from "./resumeMatch/generate.js";
 import { createMatchService, type MatchService } from "./resumeMatch/matchService.js";
 import { createSupabaseMatchStore } from "./resumeMatch/matchStore.js";
@@ -18,6 +23,7 @@ export interface Services {
   dailySummary?: DailySummaryService;
   googleConnect?: ConnectService;
   resumeMatch?: MatchService;
+  docQa?: DocServices;
 }
 
 // The user's own token goes to Supabase, so row-level security decides what they can see.
@@ -44,6 +50,43 @@ function buildResumeMatch(config: Config): MatchService | undefined {
   });
 }
 
+// PDF Q&A needs the same two settings as resume match: the model key and the public Supabase key.
+function buildDocQa(config: Config): DocServices | undefined {
+  const { GOOGLE_API_KEY, SUPABASE_ANON_KEY } = config;
+  if (!GOOGLE_API_KEY || !SUPABASE_ANON_KEY) return undefined;
+  const settings = config.settings.docQa;
+  const embed = createEmbedder({
+    apiKey: GOOGLE_API_KEY,
+    model: settings.embeddingModel,
+    dimensions: settings.embeddingDimensions,
+    timeoutSeconds: settings.embeddingTimeoutSeconds,
+  });
+  const openStore = (userId: string, jwt: string) => createSupabaseDocStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId);
+  return {
+    ingest: createIngestService({
+      openStore,
+      embed,
+      settings: {
+        maxPages: settings.maxPages,
+        maxPdfBytes: settings.maxPdfBytes,
+        minTextChars: settings.minTextChars,
+        chunkChars: settings.chunkChars,
+        chunkOverlapChars: settings.chunkOverlapChars,
+      },
+    }),
+    ask: createAskService({
+      openStore,
+      embed,
+      answer: createAnswer(
+        // maxRetries 0: createAnswer does the (bounded) retrying, so tries don't multiply.
+        new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: settings.temperature, maxRetries: 0 }),
+        { timeoutSeconds: settings.llmTimeoutSeconds, maxRetries: settings.llmMaxRetries },
+      ),
+      settings: { topK: settings.topK, minSimilarity: settings.minSimilarity },
+    }),
+  };
+}
+
 // A service whose settings are missing is left out (and the missing names are logged), so the
 // rest of the service still starts and that route answers 503.
 export function buildServices(config: Config): Services {
@@ -52,10 +95,12 @@ export function buildServices(config: Config): Services {
     Object.entries(required).filter(([, value]) => !value).map(([name]) => name);
 
   const resumeMatch = buildResumeMatch(config);
+  const docQa = buildDocQa(config);
   const warnResume = () => {
     if (!resumeMatch) console.warn(`Resume match is disabled. Missing settings: ${missing({ GOOGLE_API_KEY, SUPABASE_ANON_KEY }).join(", ")}`);
+    if (!docQa) console.warn(`PDF Q&A is disabled. Missing settings: ${missing({ GOOGLE_API_KEY, SUPABASE_ANON_KEY }).join(", ")}`);
   };
-  const withResume = (services: Services): Services => (resumeMatch ? { ...services, resumeMatch } : services);
+  const withResume = (services: Services): Services => ({ ...services, ...(resumeMatch ? { resumeMatch } : {}), ...(docQa ? { docQa } : {}) });
 
   // What chat and the daily summary need: Google tokens and the model.
   const shared = missing({ SUPABASE_DB_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY });

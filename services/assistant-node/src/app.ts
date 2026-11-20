@@ -7,6 +7,7 @@ import { ConversationNotFoundError } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
 import { GoogleConnectError, InvalidStateError } from "./google-oauth/connectService.js";
+import { createDocRoutes } from "./docQa/routes.js";
 import { createResumeRoutes } from "./resumeMatch/routes.js";
 import type { Services } from "./wiring.js";
 
@@ -21,6 +22,9 @@ export function createApp(config: Config, services: Services = {}) {
   const assistant = new Hono<AuthEnv>();
   assistant.use("*", createAuth(config));
   assistant.get("/whoami", (c) => c.json({ userId: c.get("userId") }));
+
+  // PDF Q&A: POST /assistant/docs (ingest) and POST /assistant/docs/ask, same as the .NET service.
+  assistant.route("/docs", createDocRoutes(services.docQa, config.settings.docQa));
 
   // Same request and response shape as the .NET POST /assistant/chat.
   const chatBody = z.object({
