@@ -1,5 +1,6 @@
 // Pulls the text out of an uploaded resume PDF. Only the text is kept; the file is not stored.
 import { extractText, getDocumentProxy } from "unpdf";
+import { stripHiddenChars } from "./cleanText.js";
 import { ResumeInputError } from "./errors.js";
 
 export interface PdfLimits {
@@ -9,9 +10,9 @@ export interface PdfLimits {
   maxResumeChars: number;
 }
 
-// One line per text line, no runs of spaces, at most one blank line in a row.
+// One line per text line, no runs of spaces, no hidden characters, at most one blank line in a row.
 export function tidyText(text: string): string {
-  return text
+  return stripHiddenChars(text)
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map((line) => line.replace(/[ \t ]+/g, " ").trim())

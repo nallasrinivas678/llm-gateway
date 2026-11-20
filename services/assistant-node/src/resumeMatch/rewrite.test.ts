@@ -98,7 +98,7 @@ describe("applyAdditions", () => {
   });
 
   it("matches the suggested line ignoring case, spacing and dashes", () => {
-    const { text } = applyAdditions(resume, [{ ...azureAddition, afterLine: "fabrikam – senior  engineer, 2019-2026" }], [azure]);
+    const { text } = applyAdditions(resume, [{ ...azureAddition, afterLine: "fabrikam \u2013 senior  engineer, 2019-2026" }], [azure]);
     expect(text).not.toContain("ADDITIONAL EXPERIENCE");
   });
 
@@ -193,3 +193,29 @@ describe("rewording an existing line", () => {
     expect(skipped).toEqual([{ requirementId: id, reason: expect.stringContaining(reason) }]);
   });
 });
+
+describe("plain text in model-written lines", () => {
+  it("cleans hidden characters, curly quotes and long dashes from a new bullet and a skill", () => {
+    const { text, changes } = applyAdditions(
+      resume,
+      [{ ...azureAddition, skill: "Azure\u200B", bullet: "Deployed APIs to Azure App Service \u2014 \u201Cfast\u201D\u200B" }],
+      [azure],
+    );
+    expect(text).toContain('- Deployed APIs to Azure App Service - "fast"');
+    expect(changes[0]).toMatchObject({ skill: "Azure", bullet: 'Deployed APIs to Azure App Service - "fast"' });
+    expect(text).not.toMatch(/[\u200B\u2014\u201C\u201D]/);
+  });
+
+  it("cleans a reworded line too, and leaves the user's own lines as they are", () => {
+    const curly = resume.replace("- Wrote C# services", "- Wrote C# services for Jane\u2019s team");
+    const item: ConfirmedItem = { requirementId: 5, requirementText: "5+ years of C#", detail: "I used C# for 8 years at Fabrikam", evidence: "Wrote C# services" };
+    const { text } = applyAdditions(
+      curly,
+      [{ requirementId: 5, skill: "", bullet: "", afterLine: "", replaceLine: "- Wrote C# services for Jane\u2019s team", reworded: "Wrote C# services for Jane's team \u2014 8 years at Fabrikam" }],
+      [item],
+    );
+    expect(text).toContain("- Wrote C# services for Jane's team - 8 years at Fabrikam");
+    expect(text).toContain("Fabrikam - Senior Engineer, 2019-2026");
+  });
+});
+

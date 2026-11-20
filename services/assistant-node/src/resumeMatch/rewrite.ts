@@ -3,6 +3,7 @@
 // line to put it under) or, for a requirement the resume only partly shows, a reworded version of
 // that one existing line. This file makes the edits itself, so every other line (employers, titles,
 // dates) cannot change, and refuses suggestions that bring in anything the user did not say.
+import { plainTypography } from "./cleanText.js";
 import { normalizeForMatch } from "./scoring.js";
 
 // What the model suggests for one confirmed requirement.
@@ -50,7 +51,8 @@ const BULLET_PREFIX = /^\s*[-•*▪●]\s*/;
 const REWORD_MAX_GROWTH = 1.5;
 const REWORD_MAX_EXTRA_CHARS = 80;
 
-const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+// Used only on text the model wrote: one line, no hidden characters, plain quotes and dashes.
+const clean = (value: string) => plainTypography(value).replace(/\s+/g, " ").trim();
 
 // Numbers as digits only ("2M", "2,000" and "40%" give "2", "2000" and "40"), so a figure the user
 // never gave cannot slip into a bullet.
@@ -73,8 +75,9 @@ function bulletProblem(bullet: string, item: ConfirmedItem, resumeText: string):
   const given = `${item.detail}\n${item.requirementText}`;
   const knownNumbers = new Set(numbersIn(given));
   if (numbersIn(bullet).some((n) => !knownNumbers.has(n))) return "the suggested line had numbers you did not give";
-  const known = `${given}\n${resumeText}`.toLowerCase();
-  if (namesIn(bullet).some((name) => !known.includes(name.toLowerCase()))) return "the suggested line named something you did not mention";
+  // Compared in normalized form so a straight quote in the new line matches a curly one in the resume.
+  const known = normalizeForMatch(`${given}\n${resumeText}`);
+  if (namesIn(bullet).some((name) => !known.includes(normalizeForMatch(name)))) return "the suggested line named something you did not mention";
   return null;
 }
 
@@ -88,15 +91,15 @@ function rewordProblem(original: string, reworded: string, item: ConfirmedItem):
   }
   const keptNumbers = new Set(numbersIn(reworded));
   if (numbersIn(original).some((n) => !keptNumbers.has(n))) return "the reworded line dropped a number from your line";
-  const rewordedLower = reworded.toLowerCase();
-  if (namesIn(original).some((name) => !rewordedLower.includes(name.toLowerCase()))) return "the reworded line dropped a name from your line";
+  const rewordedNormal = normalizeForMatch(reworded);
+  if (namesIn(original).some((name) => !rewordedNormal.includes(normalizeForMatch(name)))) return "the reworded line dropped a name from your line";
 
   const given = `${original}
 ${item.detail}`;
   const knownNumbers = new Set(numbersIn(given));
   if (numbersIn(reworded).some((n) => !knownNumbers.has(n))) return "the reworded line had numbers you did not give";
-  const knownLower = given.toLowerCase();
-  if (namesIn(reworded).some((name) => !knownLower.includes(name.toLowerCase()))) return "the reworded line named something you did not mention";
+  const knownNormal = normalizeForMatch(given);
+  if (namesIn(reworded).some((name) => !knownNormal.includes(normalizeForMatch(name)))) return "the reworded line named something you did not mention";
   return null;
 }
 

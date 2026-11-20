@@ -1,6 +1,6 @@
 # Plan: Resume match loop (TaskTide)
 
-Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 to 3 built on branch `srnalla-resume-match-checks`; items 4 to 7 planned below. 2026-11-19.
+Status: phases 1 to 3 built and pushed (PR llm-gateway#16, digital-garden#12); roadmap items 1 to 3 merged; items 4 to 8 planned below (8a and 8b built). 2026-11-19.
 
 ## Goal
 
@@ -83,13 +83,14 @@ Compared with Simplify and Jobscan (public help pages; Wonsulting could not be c
 
 | # | Item | Size | Model calls | Status |
 |---|---|---|---|---|
-| 1 | Realistic, editable target | small | none | built (branch `srnalla-resume-match-checks`) |
-| 2 | Readability (ATS) checks | small | none | built (same branch) |
-| 3 | Reword existing bullets, with approval | medium | 1 per proposal | built (same branch) |
+| 1 | Realistic, editable target | small | none | merged (#17, digital-garden#13) |
+| 2 | Readability (ATS) checks | small | none | merged (#17, digital-garden#13) |
+| 3 | Reword existing bullets, with approval | medium | 1 per proposal | merged (#17, digital-garden#13) |
 | 4 | Formatted preview and PDF download (old phase 3) | medium | none | planned |
 | 5 | Saved matches, history list, "Not me" remembered, link to the job tracker | medium | none | planned |
 | 6 | Skill gaps across all saved jobs | small | none | planned |
 | 7 | Tailored summary or cover letter | small | 1 per draft | planned |
+| 8 | Clean AI traces from the final resume | small to medium | none | 8a and 8b built; 8c to 8e planned (plan below) |
 
 ### 1. Realistic, editable target
 Why: Simplify suggests about 70% and Jobscan 75%, and both call it their own advice. A fixed 90% pushes people to add things they do not have, which is exactly what the honesty rule is against.
@@ -117,3 +118,23 @@ Design: one model call that writes a short summary or letter from the final vers
 
 ### Not planned
 A browser extension (Simplify's main strength) is a separate product with its own review and upkeep. Revisit only if the web page proves too slow a path.
+
+### 8. Clean AI traces from the final resume (plan)
+Goal: the resume the user copies or saves should read as their own document: no hidden characters, no typography that only machines produce, no visible marks that show where a line was machine-added. What this is not: an attempt to disguise AI authorship from detectors (no restyling or "humanizing" of the wording). The wording of every added line already comes from the user's own note, and the user approves each line; this item only removes artifacts. An employer that asks whether AI was used should still get an honest answer from the user.
+
+**Where traces come from today**
+1. **Hidden or odd characters** in text the model writes (the new bullet, the reworded line, the skill name): zero-width characters, soft hyphens, direction marks, non-breaking and narrow spaces, curly quotes, em and en dashes, the single ellipsis character. They survive copy and paste, break exact matching in applicant systems, and look odd in a plain-text box. PDF text extraction can also bring in soft hyphens and ligature characters from the user's own resume. Today only `tidyText` (spaces and blank lines) and `normalizeForMatch` (only for comparing) touch them.
+2. **The fallback heading** "ADDITIONAL EXPERIENCE" (`rewrite.ts`): added when the model's suggested spot is not found. It is the one visibly machine-made structure in the output.
+3. **Highlighting** of new lines in the proposal view. UI only, so it is not in the copied text; to be confirmed by a test, and relevant again for item 4.
+4. **Export metadata** (item 4): a PDF made through the browser carries the page title and, in the print dialog, a header and footer with the web address and date. Nothing yet because item 4 is not built.
+
+**Design**
+- **8a. One cleaning function** (`cleanText.ts`, pure code, no model): removes zero-width characters (U+200B to U+200D, U+2060, U+FEFF), soft hyphen, direction marks, and turns non-breaking and other odd spaces into a plain space. Applied to the PDF text on extraction, to the resume text on start, and to the text the user accepts. Safe on the user's own text because these characters are invisible junk.
+- **8b. Plain typography for model-written lines only** (bullets, rewords, skill names): straight quotes, "..." for the ellipsis, and a plain hyphen for em and en dashes. The user's own lines are not restyled. The prompt also tells the model to write plain text; code does not rely on that.
+- **8c. No fallback heading.** When the suggested spot is not found, the proposal view asks where the line goes: a "Put it under" choice listing the role lines of the resume, with the most recent role first. Code never guesses the employer, because putting a line under the wrong employer would be a false claim (the reason the heading exists today). If the user does not choose, the line is not added and `skipped` says so.
+- **8d. Output check:** a test that the final text (after accept) has none of the characters in 8a and no marker text, and that nothing but the resume text reaches Copy.
+- **8e. With item 4:** the print view sets the document title to the person's name and shows a short tip to turn off the browser's header and footer; no "generated by" text anywhere in the page.
+
+**Order and size:** 8a and 8b first (small, pure code with tests, no screen change), then 8c (needs a choice in the proposal view and a small API change: the proposal returns the role lines and the accept call carries the chosen line), then 8d, with 8e when item 4 is built.
+
+**Open questions:** whether to keep curly quotes in the user's own lines (planned: yes, leave them); whether 8c should also let the user move a bullet after the proposal (planned: no, they can edit the text before accepting).

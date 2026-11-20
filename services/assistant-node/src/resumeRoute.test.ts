@@ -27,6 +27,7 @@ const view: MatchView = {
   results: [{ requirementId: 1, status: "met", evidence: "C#" }],
   missing: [],
   reachedTarget: true,
+  resumeText: "r",
   formatChecks: [{ id: "email", ok: true, message: "Email address found." }],
 };
 
