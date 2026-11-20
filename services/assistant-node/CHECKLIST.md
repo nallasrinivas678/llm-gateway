@@ -49,11 +49,11 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Limit how much history is sent to the model on long conversations (last 40 messages, starting at a user message, tool calls kept with their results)
 - [x] Per-user rate limit on chat (10 a minute; the .NET chat has none)
 - [x] Timeout on the model call and on each tool call (60 seconds per run, 20 per tool call; a slow run answers 504)
-- [ ] digital-garden: point the chat at the Node URL behind a flag, and show the new tool names (`list_events`, `create_draft`, ...)
+- [x] digital-garden: chat page `/app/chat` (branch `srnalla-chat-screen`): `VITE_CHAT_API_URL` points it at the Node service (falls back to llm-gateway), and each answer shows the tools used in plain words. Checked in the real app on localhost: a web search answer and a task count came back through the Node service with a real sign-in
 
 ## 4. Other connectors (dev)
 
-- [x] Task tools: `list_tasks`, `create_task`, `complete_task` on the web app's `events` table (tasks are `events` with `type = 'task'`; there is no separate `tasks` table). Unit tested; not tried live with a real sign-in yet
+- [x] Task tools: `list_tasks`, `create_task`, `complete_task` on the web app's `events` table (tasks are `events` with `type = 'task'`; there is no separate `tasks` table). Unit tested; `list_tasks` checked live through the chat page (read only); `create_task` and `complete_task` not tried live yet
 - [ ] `draft_tailored_application`: still has no written design (what it reads, what it saves); decide that before building it
 - [x] Web search (Gemini Google Search grounding): `web_search` chat tool, checked once against the real API
 - [x] Approval flow for tools that change things: not needed, per the decision above (writes run when the model calls them; email stays draft-only)
