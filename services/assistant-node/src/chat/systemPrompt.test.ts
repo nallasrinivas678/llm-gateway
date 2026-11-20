@@ -20,6 +20,13 @@ describe("system prompt", () => {
     expect(prompt).not.toMatch(/not connected/);
   });
 
+  it("only mentions web_search when the tool exists, and keeps private details out of queries", () => {
+    expect(prompt).not.toContain("web_search");
+    const withSearch = buildSystemPrompt({ today: "2026-11-18", googleConnected: true, webSearch: true });
+    expect(withSearch).toContain("web_search");
+    expect(withSearch).toMatch(/Never put the user's private details/);
+  });
+
   it("tells the model Google is not connected when it is not", () => {
     expect(buildSystemPrompt({ today: "2026-11-18", googleConnected: false })).toMatch(/Google account is not connected/);
   });

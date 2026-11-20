@@ -13,6 +13,8 @@ import { messageToStored, messagesToStored } from "./messageMapper.js";
 import { trimHistory } from "./history.js";
 import { loadMcpTools } from "./mcpTools.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
+import { taskTools, type TaskStore } from "./taskTools.js";
+import { webSearchTool, type WebSearchFn } from "./webSearch.js";
 
 export const TOO_MANY_STEPS_REPLY =
   "I couldn't finish that request. Please try a simpler request, or break it into smaller steps.";
@@ -24,6 +26,10 @@ export interface ChatDeps {
   getGoogleToken: (userId: string) => Promise<string>;
   openStore: (userId: string, jwt: string) => ConversationStore;
   googleFetch?: FetchFn;
+  // When given, the model also gets a web_search tool.
+  webSearch?: WebSearchFn;
+  // When given, the model also gets the user's TaskTide task tools.
+  openTasks?: (userId: string, jwt: string) => TaskStore;
   now?: () => Date;
 }
 
@@ -74,8 +80,8 @@ export function createChatService(deps: ChatDeps) {
       try {
         const agent = createAgent({
           model: deps.model,
-          tools: google?.tools ?? [],
-          systemPrompt: buildSystemPrompt({ today: now().toISOString().slice(0, 10), googleConnected: google !== null }),
+          tools: [...(google?.tools ?? []), ...(deps.webSearch ? [webSearchTool(deps.webSearch)] : []), ...(deps.openTasks ? taskTools(deps.openTasks(input.userId, input.jwt)) : [])],
+          systemPrompt: buildSystemPrompt({ today: now().toISOString().slice(0, 10), googleConnected: google !== null, webSearch: deps.webSearch !== undefined, tasks: deps.openTasks !== undefined }),
         });
 
         const userMessage = new HumanMessage(input.message);

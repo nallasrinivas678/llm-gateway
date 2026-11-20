@@ -23,6 +23,8 @@ export const settingsSchema = z.object({
     // A whole chat run, and one tool call, must finish within these.
     runTimeoutSeconds: positiveInt,
     toolTimeoutSeconds: positiveInt,
+    // Web search tool (Gemini Google Search grounding): time limit, answer size, links returned.
+    webSearch: z.object({ timeoutSeconds: positiveInt, maxChars: positiveInt, maxSources: positiveInt }),
   }),
   cors: z.object({ allowedOrigins: z.array(z.string().url()).min(1) }),
   dailySummary: z.object({
@@ -35,6 +37,9 @@ export const settingsSchema = z.object({
     // Extra tries after the first one, for the non-streaming call only.
     llmMaxRetries: z.number().int().min(0),
     cacheTtlSeconds: positiveInt,
+    // Optional: how many tokens Gemini may spend thinking before it answers. 0 switches thinking
+    // off (faster, about a third of the time on a sample summary); leave it out for the model's default.
+    thinkingBudget: z.number().int().min(0).optional(),
   }),
   // Resume match: score a resume against a job description (uses chat.model).
   resumeMatch: z

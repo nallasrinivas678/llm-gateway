@@ -183,6 +183,10 @@ Limits: 10 messages per user per minute (`chat.requestsPerMinute`), a whole run 
 
 Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), `504` the run took too long.
 
+A seventh tool, `web_search` (`src/chat/webSearch.ts`), is not an account tool: it asks Gemini with Google Search grounding for current public information and returns a short answer with source links (Google redirect links, titled by site). It runs as its own request, so it works next to the Google tools and also when no Google account is connected. The search sees only the query the model wrote, and the system prompt tells the model never to put private details in it. Limits are in `chat.webSearch` (20 s, 4000 characters, 5 sources).
+
+Three more tools (`src/chat/taskTools.ts`) work on the user's TaskTide to-do list, which lives in the web app's `events` table (`type = 'task'`): `list_tasks`, `create_task` (one-off, with title, due date, optional notes and priority) and `complete_task` (marks one occurrence done in `event_occurrences`). They use the user's own token, so row-level security decides what is visible, and they work without a Google account. A repeating task is listed once with its repeat rule and is not expanded into dates.
+
 Tool names changed from .NET (for example `list_events` instead of `list_upcoming_calendar_events`), so `toolCallsExecuted` shows the new names.
 
 ## The daily summary endpoints
