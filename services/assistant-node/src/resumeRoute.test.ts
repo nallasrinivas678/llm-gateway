@@ -168,6 +168,26 @@ describe("POST /resume/matches", () => {
   });
 });
 
+describe("POST /resume/place-bullet", () => {
+  const place = (app: ReturnType<typeof createApp>, body: unknown, withToken = true) => call(app, "/resume/place-bullet", json(body), withToken);
+  const text = "Fabrikam - Engineer\n- Built APIs\nContoso - Engineer\n- Wrote C#";
+
+  it("puts the bullet under the chosen role", async () => {
+    const res = await place(createApp(config, { resumeMatch: fakeService() }), { resumeText: text, under: "Fabrikam - Engineer", bullet: "Deployed to Azure" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ resumeText: "Fabrikam - Engineer\n- Built APIs\n- Deployed to Azure\nContoso - Engineer\n- Wrote C#" });
+  });
+
+  it("needs a login, a valid body and a role that is in the resume", async () => {
+    const app = createApp(config, { resumeMatch: fakeService() });
+    expect((await place(app, { resumeText: text, under: "Fabrikam - Engineer", bullet: "x" }, false)).status).toBe(401);
+    expect((await place(app, { resumeText: text })).status).toBe(400);
+    const missing = await place(app, { resumeText: text, under: "Globex - Engineer", bullet: "Deployed to Azure" });
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as { detail: string }).detail).toContain("Choose a line");
+  });
+});
+
 describe("POST /resume/matches/:id/rewrite and /versions", () => {
   const confirmed = [{ requirementId: 3, detail: "Deployed our APIs to Azure App Service" }];
   const rewrite = (app: ReturnType<typeof createApp>, body: unknown, id = matchId) => call(app, `/resume/matches/${id}/rewrite`, json(body));
