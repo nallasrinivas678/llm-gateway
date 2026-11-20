@@ -49,12 +49,13 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Limit how much history is sent to the model on long conversations (last 40 messages, starting at a user message, tool calls kept with their results)
 - [x] Per-user rate limit on chat (10 a minute; the .NET chat has none)
 - [x] Timeout on the model call and on each tool call (60 seconds per run, 20 per tool call; a slow run answers 504)
-- [ ] digital-garden: point the chat at the Node URL behind a flag, and show the new tool names (`list_events`, `create_draft`, ...)
+- [x] digital-garden: chat page `/app/chat` (branch `srnalla-chat-screen`): `VITE_CHAT_API_URL` points it at the Node service (falls back to llm-gateway), and each answer shows the tools used in plain words. Checked in the real app on localhost: a web search answer and a task count came back through the Node service with a real sign-in
 
 ## 4. Other connectors (dev)
 
-- [ ] Task tools and `draft_tailored_application` (needs the TaskTide `tasks` table definition from the digital-garden repo)
-- [ ] Web search (Gemini Google Search grounding)
+- [x] Task tools: `list_tasks`, `create_task`, `complete_task` on the web app's `events` table (tasks are `events` with `type = 'task'`; there is no separate `tasks` table). Unit tested; `list_tasks` checked live through the chat page (read only); `create_task` and `complete_task` not tried live yet
+- [ ] `draft_tailored_application`: still has no written design (what it reads, what it saves); decide that before building it
+- [x] Web search (Gemini Google Search grounding): `web_search` chat tool, checked once against the real API
 - [x] Approval flow for tools that change things: not needed, per the decision above (writes run when the model calls them; email stays draft-only)
 
 ## 5. Daily summary (dev)
@@ -64,8 +65,9 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Measured speed against the current ~10 seconds: 7-9 s cold, so no slower than .NET
 - [x] digital-garden branch `srnalla-node-daily-summary` (not merged yet): optional `VITE_DAILY_SUMMARY_API_URL` points the Dashboard summary at the Node service; the Connect Google prompt also recognises the Node wording
 - [x] Checked in the real app on localhost with a real Google sign-in: the Dashboard streamed the summary from the Node service (real login token accepted, CORS fine)
-- [ ] Merge that digital-garden branch, then set `VITE_DAILY_SUMMARY_API_URL` in Vercel once the Fly app is live
-- [ ] Optional: if the wait matters, try switching off Gemini's "thinking" for the summary (most of the time is the model, not Google)
+- [x] The digital-garden change is merged (PR #10)
+- [ ] **(you)** Set `VITE_DAILY_SUMMARY_API_URL` in Vercel once the Fly app is live
+- [x] Switching off Gemini's "thinking" for the summary: tried on a sample summary, 4.2 s by default and 1.2 s with `thinkingBudget: 0`. It is a setting (`dailySummary.thinkingBudget`, left out so nothing changes). The one off-sample read "shipped" as "ships today", so compare real summaries before turning it on
 - [ ] The cache is per machine and in memory: keep one Fly machine, or move it to Supabase if you scale out
 
 ## 6. PDF Q&A (dev)

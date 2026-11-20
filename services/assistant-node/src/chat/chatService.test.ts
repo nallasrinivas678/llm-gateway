@@ -8,6 +8,8 @@ import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 import { createChatService, TOO_MANY_STEPS_REPLY } from "./chatService.js";
 import { ConversationNotFoundError, type ConversationStore } from "./conversationStore.js";
 import { rowToMessage, type StoredMessage } from "./messageMapper.js";
+import type { TaskStore } from "./taskTools.js";
+import type { WebSearchFn } from "./webSearch.js";
 
 const settings = loadSettings();
 
@@ -77,7 +79,14 @@ function fakeGoogle(status = 200, body: unknown = { items: [] }) {
 
 function setup(
   chatModel: RecordingModel,
-  options: { google?: ReturnType<typeof fakeGoogle>; token?: () => Promise<string>; maxToolRounds?: number; chat?: Partial<typeof settings.chat> } = {},
+  options: {
+    google?: ReturnType<typeof fakeGoogle>;
+    token?: () => Promise<string>;
+    maxToolRounds?: number;
+    chat?: Partial<typeof settings.chat>;
+    webSearch?: WebSearchFn;
+    openTasks?: (userId: string, jwt: string) => TaskStore;
+  } = {},
 ) {
   const memory = memoryStore();
   const google = options.google ?? fakeGoogle();
@@ -87,6 +96,8 @@ function setup(
     getGoogleToken: options.token ?? (async () => "google-token"),
     openStore: () => memory.store,
     googleFetch: google.googleFetch,
+    webSearch: options.webSearch,
+    openTasks: options.openTasks,
     now: () => new Date("2026-11-17T12:00:00Z"),
   });
   return { service, memory, google, chatModel };
@@ -121,6 +132,48 @@ describe("chat service", () => {
     expect(saved[1]?.toolCalls).toEqual([{ Id: "call-1", ToolName: "list_events", ArgumentsJson: '{"maxResults":3}' }]);
     expect(saved[2]?.toolCallId).toBe("call-1");
     expect(saved[2]?.content).toContain("Standup");
+  });
+
+  it("lets the model search the web when a search is configured, even without a Google account", async () => {
+    const queries: string[] = [];
+    const webSearch: WebSearchFn = async (query) => {
+      queries.push(query);
+      return { answer: "It opens at 9.", sources: [{ title: "Site", url: "https://site.example" }] };
+    };
+    const reconnect = async () => {
+      throw new GoogleReconnectRequired("connect");
+    };
+    const { service, memory, chatModel } = setup(model(toolCall("web_search", { query: "museum opening hours" }), new AIMessage("It opens at 9.")), { webSearch, token: reconnect });
+
+    const result = await service.chat(input);
+
+    expect(queries).toEqual(["museum opening hours"]);
+    expect(result.toolCallsExecuted).toEqual(["web_search"]);
+    expect(memory.rows.get("conv-1")!.find((m) => m.role === "tool")?.content).toContain("https://site.example");
+    expect(systemPromptOf(chatModel)).toContain("web_search");
+  });
+
+  it("gives the model the user's task tools, opened with the caller's own token", async () => {
+    const opened: string[][] = [];
+    const created: unknown[] = [];
+    const openTasks = (userId: string, jwt: string): TaskStore => {
+      opened.push([userId, jwt]);
+      return { list: async () => [], create: async (task) => (created.push(task), { id: "t-1" }), complete: async () => null };
+    };
+    const { service, chatModel } = setup(model(toolCall("create_task", { title: "Pay rent", dueDate: "2026-11-24" }), new AIMessage("Done.")), { openTasks });
+
+    const result = await service.chat(input);
+
+    expect(opened).toEqual([["user-1", "jwt"]]);
+    expect(created).toEqual([{ title: "Pay rent", dueDate: "2026-11-24", notes: undefined, priority: "none" }]);
+    expect(result.toolCallsExecuted).toEqual(["create_task"]);
+    expect(systemPromptOf(chatModel)).toContain("list_tasks");
+  });
+
+  it("does not mention web search when none is configured", async () => {
+    const { service, chatModel } = setup(model(new AIMessage("Hi")));
+    await service.chat(input);
+    expect(systemPromptOf(chatModel)).not.toContain("web_search");
   });
 
   it("sends earlier messages of the conversation to the model on the next turn", async () => {

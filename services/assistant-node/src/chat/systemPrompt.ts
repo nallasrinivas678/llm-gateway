@@ -1,5 +1,5 @@
 // The instructions given to the model on every chat request (the .NET chat had none).
-export function buildSystemPrompt(options: { today: string; googleConnected: boolean }): string {
+export function buildSystemPrompt(options: { today: string; googleConnected: boolean; webSearch?: boolean; tasks?: boolean }): string {
   const lines = [
     "You are TaskTide's assistant. Help the user with their calendar, email drafts and Google Docs using the tools you are given.",
     "- Use tools instead of guessing. Never invent events, emails or document content.",
@@ -9,6 +9,16 @@ export function buildSystemPrompt(options: { today: string; googleConnected: boo
     "- Keep answers short and clear.",
     `Today's date is ${options.today} (UTC).`,
   ];
+  if (options.webSearch) {
+    lines.push(
+      "- Use web_search only for current or public information (news, facts, prices, opening hours), never for the user's own calendar, email or documents. Mention the source when you use it. Never put the user's private details (emails, documents, event details) in a search query.",
+    );
+  }
+  if (options.tasks) {
+    lines.push(
+      "- The user's TaskTide tasks (their to-do list, not Google Calendar events) are managed with list_tasks, create_task and complete_task. Dates are plain dates (YYYY-MM-DD). To complete a task, find its id with list_tasks first. A task needs a title and a due date: ask if either is missing.",
+    );
+  }
   if (!options.googleConnected) {
     lines.push(
       "The user's Google account is not connected, so you have no calendar, email or document tools right now. If they ask for those, tell them to connect their Google account in the app first.",

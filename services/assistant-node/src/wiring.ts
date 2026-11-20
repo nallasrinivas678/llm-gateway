@@ -3,6 +3,8 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { createClient } from "@supabase/supabase-js";
 import { createChatService, type ChatService } from "./chat/chatService.js";
+import { createSupabaseTaskStore } from "./chat/taskTools.js";
+import { createWebSearch } from "./chat/webSearch.js";
 import { createSupabaseConversationStore } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { createDailySummaryService, type DailySummaryService } from "./dailySummary/dailySummaryService.js";
@@ -119,8 +121,14 @@ export function buildServices(config: Config): Services {
   });
   const getGoogleToken = (userId: string) => tokens.getAccessToken(userId);
 
+  const { thinkingBudget } = config.settings.dailySummary;
   const dailySummary = createDailySummaryService({
-    model: new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: config.settings.chat.temperature }),
+    model: new ChatGoogleGenerativeAI({
+      apiKey: GOOGLE_API_KEY,
+      model: config.settings.chat.model,
+      temperature: config.settings.chat.temperature,
+      ...(thinkingBudget === undefined ? {} : { thinkingConfig: { thinkingBudget } }),
+    }),
     settings: config.settings,
     getGoogleToken,
   });
@@ -150,6 +158,8 @@ export function buildServices(config: Config): Services {
     model: new ChatGoogleGenerativeAI({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, temperature: config.settings.chat.temperature }),
     settings: config.settings,
     getGoogleToken,
+    openTasks: (userId, jwt) => createSupabaseTaskStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
+    webSearch: createWebSearch({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, ...config.settings.chat.webSearch }),
     openStore: (userId, jwt) => createSupabaseConversationStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
   });
   return withResume({ chat, dailySummary, googleConnect });

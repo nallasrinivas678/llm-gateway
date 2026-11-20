@@ -36,6 +36,15 @@ describe("daily summary settings", () => {
     },
   );
 
+  it("treats the thinking budget as optional, allows 0 (off), and rejects a negative number", () => {
+    const settings = valid();
+    expect(settings.dailySummary.thinkingBudget).toBeUndefined();
+    settings.dailySummary.thinkingBudget = 0;
+    expect(parseSettings(settings).dailySummary.thinkingBudget).toBe(0);
+    settings.dailySummary.thinkingBudget = -1;
+    expect(() => parseSettings(settings)).toThrow();
+  });
+
   it("allows zero retries, but not a negative number", () => {
     const settings = valid();
     settings.dailySummary.llmMaxRetries = 0;
