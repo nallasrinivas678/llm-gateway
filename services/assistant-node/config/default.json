@@ -104,6 +104,10 @@
     "model": "gemini-2.5-flash",
     "temperature": 0.2,
     "maxToolRounds": 5,
-    "maxMessageLength": 4000
+    "maxMessageLength": 4000,
+    "requestsPerMinute": 10,
+    "maxHistoryMessages": 40,
+    "runTimeoutSeconds": 60,
+    "toolTimeoutSeconds": 20
   }
 }

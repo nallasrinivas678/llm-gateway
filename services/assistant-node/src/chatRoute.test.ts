@@ -92,6 +92,26 @@ describe("POST /assistant/chat", () => {
     expect(JSON.stringify(await response.json())).not.toContain("hunter2");
   });
 
+  it("answers 504 when the assistant takes too long", async () => {
+    const { chat } = fakeChat(async () => {
+      throw Object.assign(new Error("The operation timed out"), { name: "TimeoutError" });
+    });
+    const response = await post(createApp(config, { chat }), { message: "hi" });
+    expect(response.status).toBe(504);
+    expect((await response.json()).error).toContain("too long");
+  });
+
+  it("limits each user to the configured number of messages a minute", async () => {
+    const { chat, calls } = fakeChat(ok);
+    const app = createApp(config, { chat });
+    for (let i = 0; i < config.settings.chat.requestsPerMinute; i++) expect((await post(app, { message: "hi" })).status).toBe(200);
+
+    const limited = await post(app, { message: "hi" });
+    expect(limited.status).toBe(429);
+    expect((await limited.json()).error).toContain("Too many");
+    expect(calls).toHaveLength(config.settings.chat.requestsPerMinute);
+  });
+
   it("answers 503 when chat is not configured", async () => {
     expect((await post(createApp(config), { message: "hi" })).status).toBe(503);
   });

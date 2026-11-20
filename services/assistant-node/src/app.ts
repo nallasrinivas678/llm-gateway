@@ -8,6 +8,7 @@ import type { Config } from "./config.js";
 import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
 import { GoogleConnectError, InvalidStateError } from "./google-oauth/connectService.js";
 import { createDocRoutes } from "./docQa/routes.js";
+import { createRateLimiter } from "./resumeMatch/generate.js";
 import { createResumeRoutes } from "./resumeMatch/routes.js";
 import type { Services } from "./wiring.js";
 
@@ -32,11 +33,14 @@ export function createApp(config: Config, services: Services = {}) {
     message: z.string().trim().min(1).max(config.settings.chat.maxMessageLength),
   });
 
+  const allowChat = createRateLimiter(config.settings.chat.requestsPerMinute);
+
   assistant.post("/chat", async (c) => {
     if (!services.chat) return c.json({ error: "Chat is not configured on this server." }, 503);
 
     const parsed = chatBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "Invalid request." }, 400);
+    if (!allowChat(c.get("userId"))) return c.json({ error: "Too many messages. Wait a minute and try again." }, 429);
 
     try {
       const result = await services.chat.chat({
@@ -48,6 +52,7 @@ export function createApp(config: Config, services: Services = {}) {
       return c.json(result);
     } catch (error) {
       if (error instanceof ConversationNotFoundError) return c.json({ error: "Conversation not found." }, 404);
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return c.json({ error: "The assistant took too long. Try again." }, 504);
       // Log what failed, never what the user said.
       console.error("chat failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
       return c.json({ error: "The assistant could not complete the request." }, 502);
