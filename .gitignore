@@ -21,3 +21,7 @@ graphify-out/
 
 # Test coverage reports
 coverage/
+
+# PDF Q&A evals: saved embeddings and run results
+services/assistant-node/evals/.cache/
+services/assistant-node/evals/results/

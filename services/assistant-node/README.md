@@ -235,6 +235,22 @@ How it works: ingest downloads the PDF, reads the text of each page (`unpdf`; hi
 
 Known limits: the chunks are replaced with a delete and then inserts, not one transaction (a failure leaves the document `failed` and re-running fixes it); the "already running" check is per machine, so keep one Fly machine.
 
+## PDF Q&A evals
+
+A small, repeatable test of the AI part of PDF Q&A (3 made-up documents, 39 questions in `evals/datasets`). It is a script, not part of `npm test`, because it calls Gemini. The scoring rules, dataset checks and embedding cache are unit tested.
+
+```bash
+npm run eval -- retrieval
+```
+
+Sweeps chunk size (600, 1200, 2400), top-k (4, 6, 8) and similarity floor (0.40 to 0.65) with embeddings only, and prints hit rate, correct refusals and wrongly refused answers. Embeddings are cached in `evals/.cache`, so a re-run costs nothing.
+
+```bash
+npm run eval -- answer --only lease --max-calls 12
+```
+
+Asks the questions through the real prompt and checks each answer in code: required facts present, no forbidden text (the injected instruction), a refusal when the document cannot answer, and the cited pages. It uses the model's daily quota (about 20 calls a day on the free tier), so `--max-calls` stops early and lists what was not run. Options: `--only <dataset>`, `--chunk`, `--topk`, `--floor`. Results are saved in `evals/results` (git-ignored).
+
 ## What is an MCP server here?
 
 An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
