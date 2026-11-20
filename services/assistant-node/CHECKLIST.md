@@ -30,9 +30,10 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 ## 2. Decisions needed (you)
 
 - [x] How the chat service stores conversations: decided on the signed-in user's own token (row-level security does the checking; only the public Supabase key is needed)
-- [ ] Email: draft-only (current, recommended) or also allow an approved send
-- [ ] Should the app show a confirm step before the assistant creates a calendar event or edits a Google Doc? (needs a frontend change in digital-garden)
-- [ ] Fly app name and region for the new service
+- [x] Email: draft-only. The assistant can create drafts, never send (decided 2026-11-20)
+- [x] No confirm step before the assistant creates a calendar event or edits a Google Doc (decided 2026-11-20); the web app needs no change for this
+- [x] Fly app `assistant-service` in a US region: `iad` (Ashburn, Virginia), already set in `fly.toml` (decided 2026-11-20)
+- [ ] Billing for the Gemini key used by the evals, or spreading eval runs over days: later (decided 2026-11-20); until then the answer eval stops when the free quota runs out
 
 ## 3. Chat core (dev)
 
@@ -54,7 +55,7 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 
 - [ ] Task tools and `draft_tailored_application` (needs the TaskTide `tasks` table definition from the digital-garden repo)
 - [ ] Web search (Gemini Google Search grounding)
-- [ ] Approval flow for tools that change things (depends on the decision above)
+- [x] Approval flow for tools that change things: not needed, per the decision above (writes run when the model calls them; email stays draft-only)
 
 ## 5. Daily summary (dev)
 
