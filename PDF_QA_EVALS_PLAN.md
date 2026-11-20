@@ -5,7 +5,7 @@ Goals, in order:
 1. **Migrate PDF Q&A from the .NET assistant to `services/assistant-node`** (step M, below), with the same behaviour and API, so the Node service can replace .NET for this feature.
 2. **Add a small, repeatable test of the AI part** (steps E0 to E5), so that choices like the similarity floor, number of chunks, chunk size and prompt are made from numbers, not guesses. It covers the "evaluation set first" item in `services/assistant-node/CHECKLIST.md` section 6, and can also run the same questions against the .NET service (checklist section 9).
 
-Status: M1 to M4 and M6 are built (see `services/assistant-node/src/docQa`, README section "PDF Q&A endpoints"), tested with fakes; M5 (live check) and the evals are still to do. Before M, PDF Q&A was not built in Node; the .NET version (`src/LlmGateway.Assistant/Docs`) is the reference. Its settings today: chunks of 2400 characters with 300 overlap, top 6, similarity floor 0.55 (in `appsettings`; the C# default is 0.5), temperature 0.2, `gemini-embedding-001` at 1536 dimensions.
+Status: E1 to E3 are built and run (documents, scoring, retrieval sweep); E4 (answer eval) is built but a full run needs more model quota; first findings are in "First results" below. M1 to M4 and M6 are built (see `services/assistant-node/src/docQa`, README section "PDF Q&A endpoints"), tested with fakes; M5 (live check) and the evals are still to do. Before M, PDF Q&A was not built in Node; the .NET version (`src/LlmGateway.Assistant/Docs`) is the reference. Its settings today: chunks of 2400 characters with 300 overlap, top 6, similarity floor 0.55 (in `appsettings`; the C# default is 0.5), temperature 0.2, `gemini-embedding-001` at 1536 dimensions.
 
 ## Step M: migrate PDF Q&A to Node (first)
 
@@ -125,6 +125,12 @@ Each phase ends with a stop for review.
 * **E3, retrieval eval and sweep.** Run it, choose the floor, top-k and chunk size, record them in config and the checklist.
 * **E4, answer eval.** Answers, refusal, citations and injection checks; first baseline committed.
 * **E5, confirm and document.** One live run through the real endpoint to confirm the in-memory result matches; README section "Running the evals"; optional comparison with .NET.
+
+## First results (2026-11-20, 3 synthetic documents, 39 questions)
+
+* **Retrieval finds the right page every time** at the current settings (hit rate 100 percent, mean reciprocal rank 0.97) for every chunk size and top-k tried. These documents are short, so chunk size and top-k made no difference; a longer real document is needed to separate them.
+* **The 0.55 similarity floor does not refuse unanswerable questions about the document's own topic.** "Is there a gym?" asked of a lease scores above 0.55, so 0 percent of the unanswerable questions were refused by the floor (the France question in the live check was, because it is off topic). Raising the floor to 0.65 refuses all of them but also drops 25 to 28 percent of real answers, so the floor cannot do this job. Refusing near-topic questions has to come from the model following the prompt, which the answer eval measures.
+* **Answer eval, first run:** the first 6 lease questions all passed (facts and cited pages). The free tier ran out of model calls after 7, so the multi-page, injection and unanswerable questions have not been run yet.
 
 ## Left out on purpose
 
