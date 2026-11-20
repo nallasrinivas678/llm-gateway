@@ -6,6 +6,7 @@ import { isQuotaError } from "../resumeMatch/generate.js";
 import type { EmbedFn } from "./embeddings.js";
 import { DocNotFoundError, DocNotReadyError } from "./errors.js";
 import type { AskSource, DocStore, RetrievedChunk } from "./store.js";
+import { logError, logInfo } from "../log.js";
 
 export const NOT_FOUND_ANSWER = "I couldn't find that in this document.";
 
@@ -84,15 +85,18 @@ export function createAskService(deps: AskDeps): AskService {
         result = { answer, sources: sourcesUsed(answer, relevant) };
       }
 
-      console.info(
-        `doc ask: questionLength=${question.length} retrieved=${retrieved.length} relevant=${relevant.length} topSimilarity=${(retrieved.length ? Math.max(...retrieved.map((c) => c.similarity)) : 0).toFixed(3)}`,
-      );
+      logInfo("doc ask", {
+        questionLength: question.length,
+        retrieved: retrieved.length,
+        relevant: relevant.length,
+        topSimilarity: Number((retrieved.length ? Math.max(...retrieved.map((c) => c.similarity)) : 0).toFixed(3)),
+      });
 
       // Saving the conversation must not lose the answer the user is waiting for.
       try {
         await store.saveExchange(documentId, question, result.answer, result.sources);
       } catch (error) {
-        console.error("could not save the document conversation:", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+        logError("could not save the document conversation", error);
       }
       return result;
     },

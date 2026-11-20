@@ -108,14 +108,14 @@ describe("ask service", () => {
     const store = fakeStore({ saveExchange: async () => { throw new Error("db down"); } });
     const result = await createAskService({ openStore: () => store, embed, answer: async () => "Yes (p. 3).", settings }).ask("u1", "jwt", "d1", "Q?");
     expect(result.answer).toBe("Yes (p. 3).");
-    expect(String(error.mock.calls[0]?.[1])).toContain("db down");
+    expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toMatchObject({ event: "could not save the document conversation", error: "Error" });
+    expect(String(error.mock.calls[0]?.[0])).not.toContain("db down");
   });
 
   it("logs the question length and similarity, never the question", async () => {
     await createAskService({ openStore: () => fakeStore(), embed, answer: async () => "Yes (p. 3).", settings }).ask("u1", "jwt", "d1", "secret question text");
     const line = String(info.mock.calls[0]?.[0]);
-    expect(line).toContain("questionLength=20");
-    expect(line).toContain("topSimilarity=0.900");
+    expect(JSON.parse(line)).toMatchObject({ event: "doc ask", questionLength: 20, topSimilarity: 0.9 });
     expect(line).not.toContain("secret");
   });
 });

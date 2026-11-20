@@ -90,7 +90,7 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [ ] Live test of the write tools (`create_event`, `create_draft`, `append_to_doc`, `read_doc`); needs the chat endpoint, which the web app has no screen for yet
 - [ ] Google tokens are stored as plain text; consider encrypting or Supabase Vault
 - [x] Timeouts on every outside call: models (all), Google calls and token refresh (`google.requestTimeoutSeconds`, 15 s), token database queries (same setting), job page fetch, embeddings, chat run and tool calls
-- [ ] Structured logs without personal content
+- [x] Structured logs without personal content: one JSON line per event (`src/log.ts`) with the error's type, status and code, never its message (messages from the database, Google and the model can quote user data)
 - [x] `npm audit`: 0 vulnerabilities (2026-11-20)
 - [ ] ESLint and Prettier before a second developer joins
 - [ ] Make the CI checks required in the repository's branch protection rules (GitHub setting, **you**)

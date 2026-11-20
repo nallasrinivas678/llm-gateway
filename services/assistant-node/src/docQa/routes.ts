@@ -7,6 +7,7 @@ import { createRateLimiter, isQuotaError } from "../resumeMatch/generate.js";
 import type { AskService } from "./ask.js";
 import { DocBusyError, DocNotFoundError, DocNotReadyError } from "./errors.js";
 import type { IngestService } from "./ingest.js";
+import { logError } from "../log.js";
 
 export interface DocServices {
   ingest: IngestService;
@@ -19,7 +20,7 @@ export function createDocRoutes(services: DocServices | undefined, options: { ma
   const notConfigured = { detail: "PDF Q&A is not configured on this server." };
   const logFailure = (what: string, error: unknown) =>
     // Log what failed, never the question or the document text.
-    console.error(`${what} failed:`, error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+    logError(`${what} failed`, error);
 
   const ingestBody = z.object({ documentId: z.string().uuid() });
 

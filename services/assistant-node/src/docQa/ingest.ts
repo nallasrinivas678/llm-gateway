@@ -6,6 +6,7 @@ import type { EmbedFn } from "./embeddings.js";
 import { DocBusyError, DocInputError, DocNotFoundError } from "./errors.js";
 import { extractPages, type PageLimits } from "./pages.js";
 import type { DocStore } from "./store.js";
+import { logError } from "../log.js";
 
 export interface IngestSettings extends PageLimits {
   chunkChars: number;
@@ -43,11 +44,11 @@ export function createIngestService(deps: IngestDeps): IngestService {
     } catch (error) {
       let message = "Processing failed. Please try again.";
       if (error instanceof DocInputError) message = error.message;
-      else console.error("pdf ingest failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+      else logError("pdf ingest failed", error);
       try {
         await store.fail(documentId, message);
       } catch (failError) {
-        console.error("could not mark the document failed:", failError instanceof Error ? failError.message.slice(0, 200) : "unknown error");
+        logError("could not mark the document failed", failError);
       }
     } finally {
       running.delete(documentId);
