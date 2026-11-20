@@ -11,6 +11,7 @@ import { createDocRoutes } from "./docQa/routes.js";
 import { createRateLimiter } from "./resumeMatch/generate.js";
 import { createResumeRoutes } from "./resumeMatch/routes.js";
 import type { Services } from "./wiring.js";
+import { logError } from "./log.js";
 
 export function createApp(config: Config, services: Services = {}) {
   const app = new Hono<AuthEnv>();
@@ -54,7 +55,7 @@ export function createApp(config: Config, services: Services = {}) {
       if (error instanceof ConversationNotFoundError) return c.json({ error: "Conversation not found." }, 404);
       if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return c.json({ error: "The assistant took too long. Try again." }, 504);
       // Log what failed, never what the user said.
-      console.error("chat failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+      logError("chat failed", error);
       return c.json({ error: "The assistant could not complete the request." }, 502);
     }
   });
@@ -62,7 +63,7 @@ export function createApp(config: Config, services: Services = {}) {
   // Daily summary: same JSON and SSE events as the .NET endpoints. Errors carry a `detail`.
   const summaryFailure = (error: unknown) => {
     if (error instanceof SummaryUnavailableError) return error.message;
-    console.error("daily summary failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+    logError("daily summary failed", error);
     return "The daily summary could not be generated.";
   };
 
@@ -118,7 +119,7 @@ export function createApp(config: Config, services: Services = {}) {
     } catch (error) {
       if (error instanceof InvalidStateError) return c.json({ detail: error.message }, 400);
       if (error instanceof GoogleConnectError) return c.json({ detail: error.message }, 502);
-      console.error("google connect failed:", error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+      logError("google connect failed", error);
       return c.json({ detail: "Could not connect your Google account." }, 502);
     }
   });

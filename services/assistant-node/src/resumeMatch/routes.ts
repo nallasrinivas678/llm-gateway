@@ -12,6 +12,7 @@ import type { MatchService } from "./matchService.js";
 import { viewOf } from "./matchService.js";
 import { extractPdfText } from "./pdfText.js";
 import { placeBullet } from "./rewrite.js";
+import { logError } from "../log.js";
 
 export function createResumeRoutes(config: Config, service: MatchService | undefined) {
   const settings = config.settings.resumeMatch;
@@ -22,7 +23,7 @@ export function createResumeRoutes(config: Config, service: MatchService | undef
   const notConfigured = { detail: "Resume match is not configured on this server." };
   const logFailure = (what: string, error: unknown) =>
     // Log what failed, never the resume or job text.
-    console.error(`${what} failed:`, error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : "unknown error");
+    logError(`${what} failed`, error);
 
   // Multipart upload with a `file` field. The body limit stops oversized uploads before parsing.
   routes.post(

@@ -69,7 +69,8 @@ describe("ingest", () => {
     await done;
 
     expect(store.fail).toHaveBeenCalledWith("d1", "Processing failed. Please try again.");
-    expect(String(error.mock.calls[0]?.[1])).toContain("storage is down");
+    expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toMatchObject({ event: "pdf ingest failed", error: "Error" });
+    expect(String(error.mock.calls[0]?.[0])).not.toContain("storage is down");
   });
 
   it("copes when it cannot even mark the document failed", async () => {
