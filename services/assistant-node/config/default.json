@@ -83,6 +83,23 @@
       "maxRedirects": 3
     }
   },
+  "docQa": {
+    "embeddingModel": "gemini-embedding-001",
+    "embeddingDimensions": 1536,
+    "embeddingTimeoutSeconds": 30,
+    "chunkChars": 2400,
+    "chunkOverlapChars": 300,
+    "maxPages": 200,
+    "maxPdfBytes": 20971520,
+    "minTextChars": 200,
+    "maxQuestionChars": 1000,
+    "topK": 6,
+    "minSimilarity": 0.55,
+    "temperature": 0.2,
+    "llmTimeoutSeconds": 30,
+    "llmMaxRetries": 1,
+    "questionsPerMinute": 10
+  },
   "chat": {
     "model": "gemini-2.5-flash",
     "temperature": 0.2,

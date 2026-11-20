@@ -70,12 +70,14 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 ## 6. PDF Q&A (dev)
 
 - [ ] Evaluation set first: 3-4 sample PDFs, about 30 questions with the expected page
-- [ ] Ingest: upload, text extraction per page, chunking, embeddings, save (same rules as .NET: 200 pages, 2400-character chunks, 300 overlap)
-- [ ] Ask: question embedding, `match_chunks`, similarity floor 0.55, answer with page citations
-- [ ] Mark stuck "processing" documents so they can be retried; keep one Fly machine running during ingest
-- [ ] Show only the sources the answer actually used
-- [ ] Save document conversations in `doc_messages`
-- [ ] Per-user limit of 10 questions a minute; same error codes as .NET
+- [x] Ingest: text extraction per page, chunking, embeddings, save (same rules as .NET: 200 pages, 2400-character chunks, 300 overlap). Built and tested with fakes; not yet run against real Supabase and Gemini
+- [x] Ask: question embedding, `match_chunks`, similarity floor 0.55, answer with page citations (built, not yet run live)
+- [x] Stuck "processing" documents can be retried (calling ingest again works unless it is running on this machine); keep one Fly machine running during ingest
+- [x] Show only the sources the answer actually used (pages it cites)
+- [x] Save document conversations in `doc_messages`
+- [x] Per-user limit of 10 questions a minute; same error codes as .NET
+- [ ] Live check (M5): one real PDF with a real sign-in, and a second user cannot see the first user's document
+- [ ] Switch the web app to the Node endpoints behind a flag (digital-garden)
 
 ## 7. Security and hardening
 
