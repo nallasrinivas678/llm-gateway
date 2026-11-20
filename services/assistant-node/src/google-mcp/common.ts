@@ -3,6 +3,12 @@ import type { GoogleSettings } from "../config.js";
 
 export type FetchFn = typeof fetch;
 
+// The real fetch with a time limit on every call that does not bring its own signal, so a Google
+// call that hangs cannot hold a request open for ever.
+export function fetchWithTimeout(seconds: number): FetchFn {
+  return (input, init) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(seconds * 1000) });
+}
+
 // Everything one Google call needs: the user's token, the HTTP function (replaced in tests),
 // and the URLs and limits from config/default.json.
 export interface GoogleContext {

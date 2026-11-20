@@ -8,7 +8,7 @@ import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/m
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { Settings } from "../config.js";
 import { listEvents } from "../google-mcp/calendar.js";
-import type { FetchFn, GoogleContext } from "../google-mcp/common.js";
+import { fetchWithTimeout, type FetchFn, type GoogleContext } from "../google-mcp/common.js";
 import { searchEmails } from "../google-mcp/gmail.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 
@@ -85,7 +85,7 @@ export function createDailySummaryService(deps: DailySummaryDeps) {
     }
     const ctx: GoogleContext = {
       accessToken: token,
-      fetch: deps.googleFetch ?? ((input, init) => fetch(input, init)),
+      fetch: deps.googleFetch ?? fetchWithTimeout(deps.settings.google.requestTimeoutSeconds),
       settings: deps.settings.google,
     };
     const fallbackDate = now();

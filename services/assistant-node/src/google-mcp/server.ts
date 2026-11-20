@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadSettings, type GoogleSettings } from "../config.js";
 import { createEvent, listEvents } from "./calendar.js";
-import { GoogleApiError, InvalidInputError, type FetchFn, type GoogleContext } from "./common.js";
+import { GoogleApiError, InvalidInputError, type FetchFn, type GoogleContext, fetchWithTimeout } from "./common.js";
 import { appendToDoc, readDoc } from "./docs.js";
 import { createDraft, searchEmails } from "./gmail.js";
 
@@ -43,7 +43,7 @@ export function createGoogleMcpServer(googleToken: string, deps: Deps = {}): Mcp
   const settings = deps.settings ?? loadSettings().google;
   const ctx: GoogleContext = {
     accessToken: googleToken,
-    fetch: deps.fetch ?? ((input, init) => fetch(input, init)),
+    fetch: deps.fetch ?? fetchWithTimeout(settings.requestTimeoutSeconds),
     settings,
   };
   const { calendar, gmail, docs } = settings.limits;
