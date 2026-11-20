@@ -16,6 +16,13 @@ export const settingsSchema = z.object({
     // How many times the model may call tools in one turn (the .NET service allowed 5).
     maxToolRounds: positiveInt,
     maxMessageLength: positiveInt,
+    // Chat messages per user per minute.
+    requestsPerMinute: positiveInt,
+    // How many saved messages are sent to the model on a long conversation (the rest stay saved).
+    maxHistoryMessages: positiveInt,
+    // A whole chat run, and one tool call, must finish within these.
+    runTimeoutSeconds: positiveInt,
+    toolTimeoutSeconds: positiveInt,
   }),
   cors: z.object({ allowedOrigins: z.array(z.string().url()).min(1) }),
   dailySummary: z.object({

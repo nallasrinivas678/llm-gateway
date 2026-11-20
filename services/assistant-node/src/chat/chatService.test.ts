@@ -75,12 +75,15 @@ function fakeGoogle(status = 200, body: unknown = { items: [] }) {
   return { googleFetch, authHeaders };
 }
 
-function setup(chatModel: RecordingModel, options: { google?: ReturnType<typeof fakeGoogle>; token?: () => Promise<string>; maxToolRounds?: number } = {}) {
+function setup(
+  chatModel: RecordingModel,
+  options: { google?: ReturnType<typeof fakeGoogle>; token?: () => Promise<string>; maxToolRounds?: number; chat?: Partial<typeof settings.chat> } = {},
+) {
   const memory = memoryStore();
   const google = options.google ?? fakeGoogle();
   const service = createChatService({
     model: chatModel,
-    settings: { ...settings, chat: { ...settings.chat, maxToolRounds: options.maxToolRounds ?? settings.chat.maxToolRounds } },
+    settings: { ...settings, chat: { ...settings.chat, maxToolRounds: options.maxToolRounds ?? settings.chat.maxToolRounds, ...options.chat } },
     getGoogleToken: options.token ?? (async () => "google-token"),
     openStore: () => memory.store,
     googleFetch: google.googleFetch,
@@ -129,6 +132,34 @@ describe("chat service", () => {
 
     const secondTurn = chatModel.seen[1]!.map((m) => String(m.content));
     expect(secondTurn).toEqual(expect.arrayContaining(["first question", "First answer", "second question"]));
+  });
+
+  it("sends only the recent part of a long conversation to the model, but saves everything", async () => {
+    const chatModel = model(new AIMessage("a1"), new AIMessage("a2"), new AIMessage("a3"));
+    const { service, memory } = setup(chatModel, { chat: { maxHistoryMessages: 2 } });
+
+    const first = await service.chat({ ...input, message: "q1" });
+    await service.chat({ ...input, conversationId: first.conversationId, message: "q2" });
+    await service.chat({ ...input, conversationId: first.conversationId, message: "q3" });
+
+    // Third turn: history is q1, a1, q2, a2; with a limit of 2 only q2 and a2 are sent, plus q3.
+    const thirdTurn = chatModel.seen[2]!.map((m) => String(m.content));
+    expect(thirdTurn).toEqual(expect.arrayContaining(["q2", "a2", "q3"]));
+    expect(thirdTurn).not.toContain("q1");
+    expect(memory.rows.get(first.conversationId)).toHaveLength(6);
+  });
+
+  it("stops a run that takes longer than the time limit", async () => {
+    class SlowModel extends RecordingModel {
+      async _generate(messages: BaseMessage[]): Promise<ChatResult> {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return super._generate(messages);
+      }
+    }
+    const { service, memory } = setup(new SlowModel([new AIMessage("too late")]), { chat: { runTimeoutSeconds: 0.05 } });
+
+    await expect(service.chat(input)).rejects.toMatchObject({ name: expect.stringMatching(/TimeoutError|AbortError/) });
+    expect(memory.rows.get("conv-1") ?? []).toEqual([]);
   });
 
   it("gives the model rules and today's date, and tells it about the draft-only limit", async () => {

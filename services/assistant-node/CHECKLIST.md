@@ -45,10 +45,10 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] A `conversationId` that is not the caller's gives 404
 - [x] Save new messages in one insert, in the right order
 - [x] Tests with a fake chat model
-- [ ] **Live test of saving conversations with a real signed-in user's token** (needs a token from the app running on localhost:5173; not possible from here)
-- [ ] Limit how much history is sent to the model on long conversations (must keep each tool call together with its result)
-- [ ] Per-user rate limit on chat (the .NET chat has none)
-- [ ] Timeout on the model call and on each tool call
+- [x] Live test of saving conversations with a real signed-in user's token (2026-11-20, from the app on localhost:5173: two turns saved as 4 rows, then removed)
+- [x] Limit how much history is sent to the model on long conversations (last 40 messages, starting at a user message, tool calls kept with their results)
+- [x] Per-user rate limit on chat (10 a minute; the .NET chat has none)
+- [x] Timeout on the model call and on each tool call (60 seconds per run, 20 per tool call; a slow run answers 504)
 - [ ] digital-garden: point the chat at the Node URL behind a flag, and show the new tool names (`list_events`, `create_draft`, ...)
 
 ## 4. Other connectors (dev)

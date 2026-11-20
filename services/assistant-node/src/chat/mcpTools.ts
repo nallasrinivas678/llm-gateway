@@ -8,7 +8,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 type ContentBlock = { type: string; text?: string };
 
-export async function loadMcpTools(client: Client): Promise<DynamicStructuredTool[]> {
+export async function loadMcpTools(client: Client, options: { toolTimeoutMs?: number } = {}): Promise<DynamicStructuredTool[]> {
   const { tools } = await client.listTools();
   return tools.map(
     (tool) =>
@@ -16,10 +16,10 @@ export async function loadMcpTools(client: Client): Promise<DynamicStructuredToo
         name: tool.name,
         description: tool.description ?? "",
         schema: tool.inputSchema as Record<string, unknown>,
-        // Errors are returned as text, not thrown, so the model reads them and can tell the user.
+        // Errors (including a timeout) are returned as text, not thrown, so the model reads them and can tell the user.
         func: async (args: unknown) => {
           try {
-            const result = await client.callTool({ name: tool.name, arguments: args as Record<string, unknown> });
+            const result = await client.callTool({ name: tool.name, arguments: args as Record<string, unknown> }, undefined, { timeout: options.toolTimeoutMs });
             return ((result.content ?? []) as ContentBlock[])
               .filter((block) => block.type === "text")
               .map((block) => block.text ?? "")

@@ -10,6 +10,7 @@ import type { FetchFn } from "../google-mcp/common.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 import type { ConversationStore } from "./conversationStore.js";
 import { messageToStored, messagesToStored } from "./messageMapper.js";
+import { trimHistory } from "./history.js";
 import { loadMcpTools } from "./mcpTools.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 
@@ -50,7 +51,7 @@ export function createChatService(deps: ChatDeps) {
     const client = new Client({ name: "assistant-node", version: "0.1.0" });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
-    const tools = await loadMcpTools(client);
+    const tools = await loadMcpTools(client, { toolTimeoutMs: deps.settings.chat.toolTimeoutSeconds * 1000 });
     return { tools, close: () => client.close() };
   }
 
@@ -58,7 +59,8 @@ export function createChatService(deps: ChatDeps) {
     async chat(input: ChatInput): Promise<ChatResult> {
       const store = deps.openStore(input.userId, input.jwt);
       const conversationId = await store.ensureConversation(input.conversationId);
-      const history = await store.loadMessages(conversationId);
+      // Only the recent part goes to the model; the whole conversation stays saved.
+      const history = trimHistory(await store.loadMessages(conversationId), deps.settings.chat.maxHistoryMessages);
 
       // Not connected to Google (or access revoked): still chat, but without the Google tools,
       // and let the model say so. Any other failure is a real error and is passed up.
@@ -82,7 +84,7 @@ export function createChatService(deps: ChatDeps) {
           // Each tool round is two graph steps (model, then tools); +1 for the final answer.
           const result = await agent.invoke(
             { messages: [...history, userMessage] },
-            { recursionLimit: deps.settings.chat.maxToolRounds * 2 + 1 },
+            { recursionLimit: deps.settings.chat.maxToolRounds * 2 + 1, signal: AbortSignal.timeout(deps.settings.chat.runTimeoutSeconds * 1000) },
           );
           produced = (result.messages as BaseMessage[]).slice(history.length);
         } catch (error) {

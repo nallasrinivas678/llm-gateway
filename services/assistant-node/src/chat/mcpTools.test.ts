@@ -39,6 +39,21 @@ describe("MCP tools for the agent", () => {
     expect(calls).toEqual([{ name: "echo", arguments: { text: "hi" } }]);
   });
 
+  it("gives each tool call a timeout, and returns a timeout as text", async () => {
+    const options: unknown[] = [];
+    const client = {
+      listTools: async () => ({ tools: [{ name: "slow", inputSchema: { type: "object", properties: {} } }] }),
+      callTool: async (_request: unknown, _schema: unknown, option: unknown) => {
+        options.push(option);
+        throw new Error("Request timed out");
+      },
+    } as unknown as Client;
+    const [slow] = await loadMcpTools(client, { toolTimeoutMs: 5000 });
+
+    expect(await slow!.invoke({})).toBe("The tool call failed: Request timed out");
+    expect(options).toEqual([{ timeout: 5000 }]);
+  });
+
   it("returns an empty string when the tool gives no content", async () => {
     const [echo] = await loadMcpTools(fakeClient(async () => ({})));
     expect(await echo!.invoke({ text: "hi" })).toBe("");

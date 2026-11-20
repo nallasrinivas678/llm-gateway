@@ -174,12 +174,14 @@ Try it: `GET /assistant/whoami` with a valid token returns your user id.
 What happens on each request:
 
 1. The login token is checked (`src/auth.ts`). The user's own token is then used to talk to Supabase, so the database refuses anything that is not theirs. Another user's `conversationId` gives `404`.
-2. Earlier messages of the conversation are loaded.
+2. Earlier messages of the conversation are loaded. Only the last 40 (`chat.maxHistoryMessages`) go to the model, cut so that the model sees a user message first and no tool result is separated from its tool call; the whole conversation stays saved.
 3. The user's Google token is fetched (and refreshed if needed) and the Google tools are connected. If Google is not connected, the chat still works but the model is told it has no calendar, email or document tools.
 4. The agent (Gemini, see `config/default.json` > `chat`) answers, calling tools as needed, up to 5 tool rounds. If it keeps going, the user gets a polite "I couldn't finish that" reply instead of an error.
 5. The new messages are saved in one database insert, and the reply is returned.
 
-Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which).
+Limits: 10 messages per user per minute (`chat.requestsPerMinute`), a whole run must finish within 60 seconds (`chat.runTimeoutSeconds`) and each tool call within 20 seconds (`chat.toolTimeoutSeconds`). A tool that times out is reported to the model as a failed call, so it can tell the user.
+
+Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), `504` the run took too long.
 
 Tool names changed from .NET (for example `list_events` instead of `list_upcoming_calendar_events`), so `toolCallsExecuted` shows the new names.
 
