@@ -9,7 +9,7 @@
 import { createHmac } from "node:crypto";
 import { jwtVerify, SignJWT } from "jose";
 import type { GoogleSettings } from "../config.js";
-import type { FetchFn } from "../google-mcp/common.js";
+import { fetchWithTimeout, type FetchFn } from "../google-mcp/common.js";
 
 export interface ConnectedTokens {
   accessToken: string;
@@ -40,7 +40,7 @@ interface Deps {
 }
 
 export function createConnectService(deps: Deps) {
-  const fetchFn: FetchFn = deps.fetch ?? ((input, init) => fetch(input, init));
+  const fetchFn: FetchFn = deps.fetch ?? fetchWithTimeout(deps.settings.requestTimeoutSeconds);
   const now = deps.now ?? (() => new Date());
   const { oauth, urls } = deps.settings;
 

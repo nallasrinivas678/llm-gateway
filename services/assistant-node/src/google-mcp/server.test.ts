@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { loadSettings } from "../config.js";
-import type { FetchFn } from "./common.js";
+import { fetchWithTimeout, type FetchFn } from "./common.js";
 import { createGoogleMcpServer } from "./server.js";
 
 interface Call {
@@ -313,5 +313,26 @@ describe("settings are used, not hardcoded", () => {
 
     expect(google.calls[0]?.url).toBe(`https://docs.test.example/documents/${documentId}`);
     expect(result).toEqual({ title: "T", text: "abcde", truncated: true });
+  });
+});
+
+describe("fetchWithTimeout", () => {
+  it("adds a time limit, and leaves a signal the caller brought alone", async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(init?.signal);
+      return new Response("{}");
+    }) as typeof fetch;
+    try {
+      const own = new AbortController().signal;
+      await fetchWithTimeout(5)("https://example.test", {});
+      await fetchWithTimeout(5)("https://example.test", { signal: own });
+      expect(seen[0]).toBeInstanceOf(AbortSignal);
+      expect(seen[0]).not.toBe(own);
+      expect(seen[1]).toBe(own);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 });

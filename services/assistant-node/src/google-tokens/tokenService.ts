@@ -2,7 +2,7 @@
 // about to expire. Port of the read-and-refresh half of the .NET GoogleOAuthService
 // (GetValidAccessTokenAsync). The first-time connect flow is in src/google-oauth.
 import type { GoogleSettings } from "../config.js";
-import type { FetchFn } from "../google-mcp/common.js";
+import { fetchWithTimeout, type FetchFn } from "../google-mcp/common.js";
 
 export interface StoredTokens {
   accessToken: string;
@@ -30,7 +30,7 @@ interface Deps {
 }
 
 export function createTokenService(deps: Deps) {
-  const fetchFn: FetchFn = deps.fetch ?? ((input, init) => fetch(input, init));
+  const fetchFn: FetchFn = deps.fetch ?? fetchWithTimeout(deps.settings.requestTimeoutSeconds);
   const now = deps.now ?? (() => new Date());
   const marginMs = deps.settings.tokens.refreshMarginSeconds * 1000;
 

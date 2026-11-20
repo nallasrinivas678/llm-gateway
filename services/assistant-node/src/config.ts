@@ -92,6 +92,8 @@ export const settingsSchema = z.object({
       docsDocuments: httpsUrl,
       oauthToken: httpsUrl,
     }),
+    // Every call to Google, and every database query for tokens, must finish within this.
+    requestTimeoutSeconds: positiveInt,
     tokens: z.object({ refreshMarginSeconds: positiveInt }),
     // The first-time "Connect Google" flow. Scopes are the least this service needs: Gmail
     // drafts need gmail.compose (gmail.send alone cannot create a draft), and nothing here sends mail.

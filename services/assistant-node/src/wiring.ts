@@ -110,7 +110,7 @@ export function buildServices(config: Config): Services {
     return withResume({});
   }
 
-  const tokenStore = createPgTokenStore(SUPABASE_DB_URL);
+  const tokenStore = createPgTokenStore(SUPABASE_DB_URL, config.settings.google.requestTimeoutSeconds);
   const tokens = createTokenService({
     store: tokenStore,
     settings: config.settings.google,

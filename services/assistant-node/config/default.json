@@ -21,6 +21,7 @@
     "cacheTtlSeconds": 900
   },
   "google": {
+    "requestTimeoutSeconds": 15,
     "urls": {
       "calendarEvents": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
       "gmailMessages": "https://gmail.googleapis.com/gmail/v1/users/me/messages",

@@ -13,7 +13,7 @@ interface Row {
   expires_at: Date;
 }
 
-export function createPgTokenStore(connectionString: string): TokenStore & ConnectStore & { close(): Promise<void> } {
+export function createPgTokenStore(connectionString: string, queryTimeoutSeconds = 15): TokenStore & ConnectStore & { close(): Promise<void> } {
   // Supabase's pooler runs in transaction mode: no named prepared statements are used here, and
   // every call is a single statement, so nothing depends on session state.
   // TLS is always on: without it the pooler accepts a plain-text connection and tokens would cross
@@ -26,6 +26,7 @@ export function createPgTokenStore(connectionString: string): TokenStore & Conne
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
+    query_timeout: queryTimeoutSeconds * 1000,
   });
 
   return {
