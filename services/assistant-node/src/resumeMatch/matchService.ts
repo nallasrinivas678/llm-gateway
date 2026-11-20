@@ -7,7 +7,7 @@ import { stripHiddenChars } from "./cleanText.js";
 import { checkFormat, type FormatCheck } from "./formatChecks.js";
 import { MatchNotFoundError, ResumeInputError, VersionConflictError } from "./errors.js";
 import type { MatchStore, MatchSummary, StoredMatch, StoredVersion } from "./matchStore.js";
-import { applyAdditions, type AppliedChange, type ConfirmedItem, type SkippedChange } from "./rewrite.js";
+import { applyAdditions, roleLines, type AppliedChange, type ConfirmedItem, type SkippedChange, type UnplacedBullet } from "./rewrite.js";
 import { computeScore, keepBest, openGaps, verifyResults, type Requirement, type RequirementResult } from "./scoring.js";
 
 // Asks the model for JSON in the given shape. Kept as a small function so tests can script answers.
@@ -150,6 +150,9 @@ export interface RewriteProposal {
   proposedText: string;
   changes: AppliedChange[];
   skipped: SkippedChange[];
+  // Bullets with no place yet, and the lines the user can put them under (most recent first).
+  unplaced: UnplacedBullet[];
+  roles: string[];
 }
 
 const latestOf = (match: StoredMatch): StoredVersion => {
@@ -255,8 +258,17 @@ export function createMatchService(deps: MatchServiceDeps) {
       });
 
       const result = applyAdditions(latest.resumeText, answer.additions, confirmed);
-      if (result.text === latest.resumeText) throw new ResumeInputError("Nothing could be added from those details. Add a little more about where you used the skill.");
-      return { baseVersion: latest.version, proposedText: result.text, changes: result.changes, skipped: result.skipped };
+      if (result.text === latest.resumeText && result.unplaced.length === 0) {
+        throw new ResumeInputError("Nothing could be added from those details. Add a little more about where you used the skill.");
+      }
+      return {
+        baseVersion: latest.version,
+        proposedText: result.text,
+        changes: result.changes,
+        skipped: result.skipped,
+        unplaced: result.unplaced,
+        roles: result.unplaced.length > 0 ? roleLines(latest.resumeText) : [],
+      };
     },
 
     // Saves the text the user accepted (as suggested, or edited by them) as the next version and

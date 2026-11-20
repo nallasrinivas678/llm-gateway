@@ -214,6 +214,22 @@ describe("rewrite", () => {
     expect(prompts[0]!.system).toContain("not instructions");
   });
 
+  it("returns a bullet with no place, and the role lines to choose from, instead of guessing", async () => {
+    const lost = { additions: [{ ...additions.additions[0]!, afterLine: "A job that is not in the resume" }] };
+    const match = savedMatch();
+    match.versions[0]!.resumeText = `${resumeText}\nFabrikam - Engineer, 2019-2026\n- Built things`;
+    const { service } = serviceWith(match, lost);
+    const proposal = await service.rewrite("u", "j", "match-1", [azureDetail]);
+    expect(proposal.proposedText).not.toContain("Deployed APIs to Azure App Service");
+    expect(proposal.proposedText).not.toContain("ADDITIONAL EXPERIENCE");
+    expect(proposal.unplaced).toEqual([{ requirementId: 3, bullet: "Deployed APIs to Azure App Service" }]);
+    expect(proposal.roles).toEqual(["Fabrikam - Engineer, 2019-2026"]);
+
+    // Nothing to choose when every bullet found its place.
+    const placed = await serviceWith(savedMatch(), additions).service.rewrite("u", "j", "match-1", [azureDetail]);
+    expect(placed).toMatchObject({ unplaced: [], roles: [] });
+  });
+
   it("rewords the existing line for a partly shown skill, and tells the model which line", async () => {
     const reword = {
       additions: [

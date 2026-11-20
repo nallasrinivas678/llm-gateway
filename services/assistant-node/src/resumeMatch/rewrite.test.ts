@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAdditions, type Addition, type ConfirmedItem } from "./rewrite.js";
+import { applyAdditions, placeBullet, roleLines, type Addition, type ConfirmedItem } from "./rewrite.js";
 
 const resume = [
   "Jane Doe",
@@ -88,18 +88,18 @@ describe("applyAdditions", () => {
     expect(skipped[0]!.reason).toContain("too long");
   });
 
-  it("puts a bullet under its own heading when the suggested line does not exist", () => {
-    const { text } = applyAdditions(resume, [{ ...azureAddition, afterLine: "Some job that is not in the resume" }], [azure]);
-    expect(text.endsWith("ADDITIONAL EXPERIENCE\n- Deployed APIs to Azure App Service")).toBe(true);
-    // A second one joins the same heading.
-    const second = applyAdditions(text, [{ requirementId: 4, skill: "Kubernetes", bullet: "Ran 12 services on Kubernetes at Contoso", afterLine: "" }], [k8s]).text;
-    expect(second.match(/ADDITIONAL EXPERIENCE/g)).toHaveLength(1);
-    expect(second.endsWith("- Ran 12 services on Kubernetes at Contoso")).toBe(true);
+  it("leaves a bullet out, and reports it, when the suggested line does not exist", () => {
+    const { text, changes, unplaced } = applyAdditions(resume, [{ ...azureAddition, afterLine: "Some job that is not in the resume" }], [azure]);
+    expect(text).not.toContain("Deployed APIs");
+    expect(text).not.toContain("ADDITIONAL EXPERIENCE");
+    expect(changes[0]).toMatchObject({ skill: "Azure", bullet: null });
+    expect(unplaced).toEqual([{ requirementId: 3, bullet: "Deployed APIs to Azure App Service" }]);
   });
 
   it("matches the suggested line ignoring case, spacing and dashes", () => {
-    const { text } = applyAdditions(resume, [{ ...azureAddition, afterLine: "fabrikam \u2013 senior  engineer, 2019-2026" }], [azure]);
-    expect(text).not.toContain("ADDITIONAL EXPERIENCE");
+    const { text, unplaced } = applyAdditions(resume, [{ ...azureAddition, afterLine: "fabrikam \u2013 senior  engineer, 2019-2026" }], [azure]);
+    expect(text).toContain("- Deployed APIs to Azure App Service");
+    expect(unplaced).toEqual([]);
   });
 
   it("adds several skills in one list, without repeating one", () => {
@@ -122,6 +122,30 @@ describe("applyAdditions", () => {
   it("strips a leading dash from the bullet and extra spaces", () => {
     const { text } = applyAdditions(resume, [{ ...azureAddition, bullet: "  -   Deployed APIs to   Azure App Service " }], [azure]);
     expect(text).toContain("\n- Deployed APIs to Azure App Service\n");
+  });
+});
+
+describe("roleLines and placeBullet", () => {
+  it("lists the lines that have bullets under them, in resume order, without headings or the skills line", () => {
+    expect(roleLines(resume)).toEqual(["Fabrikam - Senior Engineer, 2019-2026", "Contoso - Engineer, 2015-2019"]);
+    expect(roleLines("Skills: C#\n- not a role")).toEqual([]);
+    // A plain-paragraph resume: the dated line is the role.
+    expect(roleLines("Jane\nEngineer at Fabrikam, 2019 - Present\nBuilt APIs.")).toEqual(["Engineer at Fabrikam, 2019 - Present"]);
+  });
+
+  it("puts the bullet at the end of the chosen role's bullets", () => {
+    const text = placeBullet(resume, "Contoso - Engineer, 2015-2019", "  - Ran 12 services on Kubernetes ");
+    expect(text.endsWith("- Wrote C# services\n- Ran 12 services on Kubernetes")).toBe(true);
+    const first = placeBullet(resume, "Fabrikam - Senior Engineer, 2019-2026", "Led the Azure move");
+    const lines = first.split("\n");
+    expect(lines[lines.indexOf("- Packaged services with Docker") + 1]).toBe("- Led the Azure move");
+  });
+
+  it("refuses a role that is not a line of the resume, and an empty or too long bullet", () => {
+    expect(() => placeBullet(resume, "Globex - Engineer", "Did things")).toThrow(RangeError);
+    expect(() => placeBullet(resume, "", "Did things")).toThrow(RangeError);
+    expect(() => placeBullet(resume, "Contoso - Engineer, 2015-2019", "  ")).toThrow(RangeError);
+    expect(() => placeBullet(resume, "Contoso - Engineer, 2015-2019", "x".repeat(301))).toThrow(RangeError);
   });
 });
 
@@ -161,7 +185,7 @@ describe("rewording an existing line", () => {
   });
 
   it("refuses to change a line the evidence did not come from, and falls back to a bullet if there is one", () => {
-    const { text, skipped } = run(reword({ replaceLine: "Fabrikam - Senior Engineer, 2019-2026", reworded: "Fabrikam - Principal Engineer, 2019-2026", bullet: "Used C# for 8 years at Fabrikam" }));
+    const { text, skipped } = run(reword({ replaceLine: "Fabrikam - Senior Engineer, 2019-2026", reworded: "Fabrikam - Principal Engineer, 2019-2026", afterLine: "Fabrikam - Senior Engineer, 2019-2026", bullet: "Used C# for 8 years at Fabrikam" }));
     expect(text).toContain("Fabrikam - Senior Engineer, 2019-2026");
     expect(text).not.toContain("Principal");
     expect(skipped).toEqual([{ requirementId: 5, reason: "the line to reword was not found in your resume" }]);

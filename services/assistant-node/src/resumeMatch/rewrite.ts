@@ -34,6 +34,13 @@ export interface AppliedChange {
   reworded: string | null;
 }
 
+// A bullet whose place in the resume could not be found. The user picks the role it goes under;
+// code never guesses the employer, because the wrong one would be a false claim.
+export interface UnplacedBullet {
+  requirementId: number;
+  bullet: string;
+}
+
 export interface SkippedChange {
   requirementId: number;
   reason: string;
@@ -45,7 +52,6 @@ const BULLET_LINE = /^\s*[-•*▪●]\s/;
 const SKILLS_HEADING = /^(technical |core |key )?skills?:?$/i;
 const SKILLS_INLINE = /^(technical |core |key )?skills?\s*:/i;
 const ANY_HEADING = /^[A-Z][A-Z &/,-]+:?$/;
-const FALLBACK_HEADING = "ADDITIONAL EXPERIENCE";
 
 const BULLET_PREFIX = /^\s*[-•*▪●]\s*/;
 const REWORD_MAX_GROWTH = 1.5;
@@ -128,19 +134,42 @@ function insertAfterBlock(lines: string[], index: number, bullet: string): void 
   lines.splice(at, 0, `- ${bullet}`);
 }
 
-function insertBullet(lines: string[], afterLine: string, bullet: string): void {
+// False when the suggested line is not in the resume.
+function insertBullet(lines: string[], afterLine: string, bullet: string): boolean {
   const target = normalizeForMatch(afterLine);
   const found = target ? lines.findIndex((line) => normalizeForMatch(line) === target) : -1;
-  if (found >= 0) return insertAfterBlock(lines, found, bullet);
+  if (found < 0) return false;
+  insertAfterBlock(lines, found, bullet);
+  return true;
+}
 
-  // The suggested spot does not exist, so the bullet goes under its own heading at the end.
-  let heading = lines.findIndex((line) => normalizeForMatch(line) === FALLBACK_HEADING.toLowerCase());
-  if (heading < 0) {
-    while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
-    lines.push("", FALLBACK_HEADING);
-    heading = lines.length - 1;
-  }
-  insertAfterBlock(lines, heading, bullet);
+// The lines a bullet can go under: a line that is not itself a bullet or a heading and is either
+// followed by a bullet or carries a date ("2019-2026", "Present"). Kept in resume order, which is
+// most recent first on almost every resume.
+const DATED = /\b(19|20)\d{2}\b|\bpresent\b/i;
+export function roleLines(resumeText: string): string[] {
+  const lines = resumeText.split("\n");
+  const roles: string[] = [];
+  lines.forEach((line, index) => {
+    const text = line.trim();
+    if (!text || BULLET_LINE.test(line) || ANY_HEADING.test(text) || SKILLS_INLINE.test(text)) return;
+    let next = index + 1;
+    while (next < lines.length && lines[next]!.trim() === "") next++;
+    const hasBullets = next < lines.length && BULLET_LINE.test(lines[next]!);
+    if ((hasBullets || DATED.test(text)) && !roles.includes(text)) roles.push(text);
+  });
+  return roles;
+}
+
+// Puts the bullet the user chose a role for at the end of that role's bullets. The role must be a
+// line of the text, as roleLines gave it.
+export function placeBullet(resumeText: string, under: string, bulletRaw: string): string {
+  const bullet = clean(bulletRaw).replace(BULLET_PREFIX, "");
+  const lines = resumeText.split("\n");
+  const index = under.trim() === "" ? -1 : lines.findIndex((line) => line.trim() === under.trim());
+  if (!bullet || bullet.length > MAX_BULLET_CHARS || index < 0) throw new RangeError("That line is not in the resume.");
+  insertAfterBlock(lines, index, bullet);
+  return lines.join("\n");
 }
 
 function addSkills(lines: string[], skills: string[]): void {
@@ -172,12 +201,13 @@ export function applyAdditions(
   resumeText: string,
   additions: Addition[],
   confirmed: ConfirmedItem[],
-): { text: string; changes: AppliedChange[]; skipped: SkippedChange[] } {
+): { text: string; changes: AppliedChange[]; skipped: SkippedChange[]; unplaced: UnplacedBullet[] } {
   const items = new Map(confirmed.map((c) => [c.requirementId, c]));
   const lines = resumeText.split("\n");
   const resumeLower = resumeText.toLowerCase();
   const changes: AppliedChange[] = [];
   const skipped: SkippedChange[] = [];
+  const unplaced: UnplacedBullet[] = [];
   const skills: string[] = [];
   const done = new Set<number>();
 
@@ -214,8 +244,8 @@ export function applyAdditions(
       const problem = bulletProblem(bullet, item, resumeText);
       if (problem) skipped.push({ requirementId: item.requirementId, reason: problem });
       else {
-        insertBullet(lines, addition.afterLine, bullet);
-        change.bullet = bullet;
+        if (insertBullet(lines, addition.afterLine, bullet)) change.bullet = bullet;
+        else unplaced.push({ requirementId: item.requirementId, bullet });
       }
     }
     changes.push(change);
@@ -226,5 +256,5 @@ export function applyAdditions(
   }
 
   addSkills(lines, skills);
-  return { text: lines.join("\n"), changes, skipped };
+  return { text: lines.join("\n"), changes, skipped, unplaced };
 }

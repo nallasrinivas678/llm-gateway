@@ -11,6 +11,7 @@ import { fetchJobText } from "./jobPage.js";
 import type { MatchService } from "./matchService.js";
 import { viewOf } from "./matchService.js";
 import { extractPdfText } from "./pdfText.js";
+import { placeBullet } from "./rewrite.js";
 
 export function createResumeRoutes(config: Config, service: MatchService | undefined) {
   const settings = config.settings.resumeMatch;
@@ -136,6 +137,19 @@ export function createResumeRoutes(config: Config, service: MatchService | undef
   routes.post("/matches/:id/versions", (c) =>
     modelRoute(c, acceptBody, "resume version save", (body, id) => service!.accept(c.get("userId"), c.get("jwt"), id, body)),
   );
+
+  // Puts a bullet under the role the user chose (no model, nothing saved): the text comes back for
+  // the proposal view, and the user still accepts or edits it as usual.
+  const placeBody = z.object({ resumeText: z.string().max(100000), under: z.string().max(500), bullet: z.string().max(1000) });
+  routes.post("/place-bullet", async (c) => {
+    const parsed = placeBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ detail: "Invalid request." }, 400);
+    try {
+      return c.json({ resumeText: placeBullet(parsed.data.resumeText, parsed.data.under, parsed.data.bullet) });
+    } catch {
+      return c.json({ detail: "Choose a line from your resume to put it under." }, 400);
+    }
+  });
 
   return routes;
 }
