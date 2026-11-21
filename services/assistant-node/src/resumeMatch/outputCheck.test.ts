@@ -38,6 +38,7 @@ function setup(...answers: unknown[]) {
     }),
     getMatch: vi.fn(async () => match),
     listMatches: vi.fn(async () => []),
+    deleteMatch: vi.fn(async () => {}),
     addVersion: vi.fn(async (_id, v) => {
       versions.push(v);
     }),

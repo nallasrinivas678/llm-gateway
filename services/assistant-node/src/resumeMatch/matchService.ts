@@ -299,6 +299,10 @@ export function createMatchService(deps: MatchServiceDeps) {
     async list(userId: string, jwt: string): Promise<MatchSummary[]> {
       return deps.openStore(userId, jwt).listMatches();
     },
+
+    async remove(userId: string, jwt: string, matchId: string): Promise<void> {
+      await deps.openStore(userId, jwt).deleteMatch(matchId);
+    },
   };
 }
 

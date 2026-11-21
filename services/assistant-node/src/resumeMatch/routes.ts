@@ -104,6 +104,21 @@ export function createResumeRoutes(config: Config, service: MatchService | undef
     }
   });
 
+  // Deletes a match and all its versions. Someone else's match, a missing one and a malformed id all answer 404.
+  routes.delete("/matches/:id", async (c) => {
+    if (!service) return c.json(notConfigured, 503);
+    const id = c.req.param("id");
+    if (!z.string().uuid().safeParse(id).success) return c.json({ detail: "Resume match not found." }, 404);
+    try {
+      await service.remove(c.get("userId"), c.get("jwt"), id);
+      return c.body(null, 204);
+    } catch (error) {
+      if (error instanceof MatchNotFoundError) return c.json({ detail: error.message }, 404);
+      logFailure("delete resume match", error);
+      return c.json({ detail: "Couldn't delete that resume match." }, 502);
+    }
+  });
+
   // The skills the user confirmed, each with their own words about it. The details are checked by
   // the service, which knows the length limits and gives readable messages.
   const confirmation = z.object({ requirementId: z.number().int(), detail: z.string() });
