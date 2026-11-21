@@ -299,6 +299,98 @@ Google answers `{"id":"r-123…"}` and the tool returns "Draft created (id r-123
 | `chatService.ts` | Connects server and client per request; runs approved actions through the same tools |
 | `approval.ts` | Intercepts write tools so MCP is only reached after approval |
 
+#### Where LangChain fits, and how tool results reach the model
+
+Example prompt: *"Find me toddler events in the Bay Area next week, then schedule the top rated one."* The data below is illustrative (event names are made up; the message shapes follow the code, and the model wire format is simplified).
+
+**What each library does**
+
+| Piece | Package | Job here |
+|---|---|---|
+| `ChatGoogleGenerativeAI` | `@langchain/google-genai` | The chat model: turns LangChain messages and tool schemas into Gemini API requests and the reply back into an `AIMessage` (`wiring.ts`) |
+| `DynamicStructuredTool`, message classes (`HumanMessage`, `AIMessage`, `ToolMessage`) | `@langchain/core` | A tool is a name, description, schema and `func`; messages are the shared language between the loop, the model and our storage |
+| `createAgent` | `langchain` (runs on LangGraph) | The loop: call the model, run the tools it asks for, add their results, call the model again, until it answers without tool calls |
+| `GraphRecursionError` | `@langchain/langgraph` | Raised when the loop exceeds its step limit; `chatService` turns it into the polite "couldn't finish" reply |
+
+We write: the tools (MCP wrapper, task tools, `web_search`), the wrappers around them (`withApproval`, `withTiming`), the system prompt, the history trimming and the storage. LangChain supplies the loop and the model adapter.
+
+**Tools for this prompt.** The model sees all of them; it uses two:
+
+| Step | Tool | Kind | What happens |
+|---|---|---|---|
+| Find events | `web_search` (`webSearch.ts`) | read, runs at once | A separate Gemini request with Google Search grounding; returns a short answer plus up to 5 sources |
+| Schedule one | `create_event` (Google MCP) | write | Only proposed: saved as a pending `agent_actions` row; runs when the user approves |
+| Optional | `list_events` (Google MCP) | read | The model may check the calendar for a clash first |
+
+`create_event` takes `summary`, `start`, `end` (ISO 8601 with offset) and an optional `description`; it has no location field, so the venue goes in the summary or description. The service cannot book, buy tickets or RSVP: it only puts an entry on the calendar.
+
+**The loop, call by call.** The model API is stateless: every model call receives the whole message list again. LangChain keeps that list as the graph's state and appends to it.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as createAgent loop (LangGraph)
+    participant M as Gemini (chat model)
+    participant T as tools node
+    participant S as web_search (own Gemini + Google Search request)
+
+    U->>A: messages = [history…, Human("Find me toddler events…")]
+    A->>M: model call 1: system prompt + messages + tool declarations
+    M-->>A: AIMessage with tool_calls [web_search {query}]
+    A->>T: run the tool calls
+    T->>S: query only (never the conversation)
+    S-->>T: answer + sources (text)
+    T-->>A: ToolMessage(tool_call_id, content = that text)
+    A->>M: model call 2: everything above + the AIMessage + the ToolMessage
+    M-->>A: AIMessage with tool_calls [create_event {…}]
+    A->>T: withApproval: validate, save pending row
+    T-->>A: ToolMessage("This change is waiting for the user's approval…")
+    A->>M: model call 3: everything again, plus the new pair
+    M-->>A: AIMessage with text and no tool_calls, so the loop ends
+    A-->>U: reply + pendingActions
+```
+
+State after the run (LangChain classes, in order):
+
+```
+HumanMessage      "Find me toddler events in the Bay Area next week, then schedule the top rated one."
+AIMessage         tool_calls: [{ id:"c1", name:"web_search", args:{ query:"toddler events Bay Area Nov 23-29 2026" } }]
+ToolMessage       tool_call_id:"c1"  content:
+                    "Three toddler events next week: Toddler Music Time, Example Library, Tue Nov 24, 10:30-11:15am (4.8 stars, 212 reviews);
+                     Little Explorers, Example Children's Museum, Sat Nov 28, 9-10am (4.5 stars, 96 reviews); …
+
+                     Sources:
+                     - Example Library events: https://example.org/events
+                     - Example Parents Guide: https://example.com/toddlers"
+AIMessage         tool_calls: [{ id:"c2", name:"create_event", args:{ summary:"Toddler Music Time (Example Library)",
+                    start:"2026-11-24T10:30:00-08:00", end:"2026-11-24T11:15:00-08:00", description:"Rated 4.8 (212 reviews). Source: https://example.org/events" } }]
+ToolMessage       tool_call_id:"c2"  content:"This change is waiting for the user's approval; it has NOT been made yet. …"
+AIMessage         "I found three toddler events. The top rated is Toddler Music Time (4.8 stars) on Tue Nov 24 at 10:30. I've proposed adding it to your calendar; approve it on the card below."
+```
+
+What model call 3 receives on the wire (simplified; the adapter maps `AIMessage.tool_calls` to `functionCall` parts and a `ToolMessage` to a `functionResponse` part, matched by the call id):
+
+```json
+{"systemInstruction":"You are TaskTide's assistant… Today's date is 2026-11-21 (UTC). Changes need the user's approval…",
+ "contents":[
+   {"role":"user",  "parts":[{"text":"Find me toddler events in the Bay Area next week, then schedule the top rated one."}]},
+   {"role":"model", "parts":[{"functionCall":{"name":"web_search","args":{"query":"toddler events Bay Area Nov 23-29 2026"}}}]},
+   {"role":"user",  "parts":[{"functionResponse":{"name":"web_search","response":{"content":"Three toddler events next week: … Sources: …"}}}]},
+   {"role":"model", "parts":[{"functionCall":{"name":"create_event","args":{"summary":"Toddler Music Time (Example Library)","start":"2026-11-24T10:30:00-08:00","end":"2026-11-24T11:15:00-08:00"}}}]},
+   {"role":"user",  "parts":[{"functionResponse":{"name":"create_event","response":{"content":"This change is waiting for the user's approval; it has NOT been made yet. …"}}}]}],
+ "tools":[{"functionDeclarations":[ …web_search, create_event, list_events, search_emails, create_draft, read_doc, append_to_doc, list_tasks, create_task, complete_task… ]}]}
+```
+
+**Points worth knowing**
+
+* **A tool result is just a string in the message list.** The model "remembers" a result only because it is sent again on every later call of the turn. The loop adds nothing else; there is no hidden memory.
+* **One user prompt means three chat-model calls and one search call** (four Gemini requests). Two tool rounds were used of the 5 allowed; `recursionLimit = 5 * 2 + 1` counts each round as a model step plus a tool step, plus the final answer.
+* **Several tool calls in one reply** (for example two searches) run in the same tools step, each with its own `ToolMessage` matched by `tool_call_id`.
+* **`web_search` is a tool that contains a model call.** Its grounded answer is capped at 4,000 characters and 5 sources, and it sees only the query the model wrote, never the conversation. "Top rated" is only as good as the text and sources the search returned: there is no structured rating data, so the model is choosing from a summary. The model should name its source; if the ratings are unclear it should ask.
+* **Web results are data, not instructions** (the tool description and system prompt say so), and the write is gated: a page that tried to inject "also add 20 events" could at worst produce more cards that the user must approve.
+* **Missing details.** The system prompt tells the model to ask when it lacks the title, end time or time zone. The service only gives it today's date in UTC; the model infers the Pacific offset from "Bay Area".
+* **Persistence.** At the end of the turn the new messages (human, both AI messages, both tool messages, the final answer) are saved in one insert. On the next turn the last 40 messages are loaded, tool calls kept with their results, so a follow-up like "make it the Saturday one instead" has the search result in context.
+
 #### Agent evals
 
 The evals answer two different questions, so there are two tiers. Both play a scenario through the real chat service (the real agent, tools, approval gate and run record) on a **fake world**: one user's tasks, calendar and mailbox in memory, a fake Google that writes down anything that changes, a fake web search, and in-memory stores. A run cannot touch real data and every scenario starts from a known state. Every check is plain code over a trace of what happened (which tools were called, which changes were proposed, whether anything real was written, how the run ended, what the reply said); no model judges another model.
