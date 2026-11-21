@@ -119,7 +119,7 @@ route handler     (only /assistant/whoami exists so far)
 | `src/auth.ts` | Login-token check. Mirrors the .NET `SupabaseJwtValidator`. |
 | `src/auth.test.ts` | Tests for the token check. Copy its style for new tests. |
 | `src/chat/chatService.ts` | One chat turn: load the conversation, connect the Google tools, run the agent, save the new messages. |
-| `src/chat/conversationStore.ts` | Saves and loads conversations as the signed-in user, so the database's row rules decide who sees what. |
+| `src/chat/conversationStore.ts` | Saves, loads, lists and deletes conversations as the signed-in user, so the database's row rules decide who sees what. |
 | `src/chat/messageMapper.ts` | Converts between stored message rows and LangChain messages (same format the .NET service writes). |
 | `src/chat/mcpTools.ts` | Turns the Google MCP tools into tools the agent can call. |
 | `src/chat/systemPrompt.ts` | The instructions the model gets on every request. |
@@ -182,6 +182,14 @@ What happens on each request:
 Limits: 10 messages per user per minute (`chat.requestsPerMinute`), a whole run must finish within 60 seconds (`chat.runTimeoutSeconds`) and each tool call within 20 seconds (`chat.toolTimeoutSeconds`). A tool that times out is reported to the model as a failed call, so it can tell the user.
 
 Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), `504` the run took too long.
+
+### Saved conversations
+
+For the chat page's list (Node service only; the .NET service has none). All three need the login token and read or delete as the user, so another user's conversation, a missing one and a malformed id all give `404`.
+
+- `GET /assistant/conversations`: `{ conversations: [{ id, title, createdAt, updatedAt }] }`, the latest 50, most recently used first. A new conversation is titled with its first message (one line, cut at a word around 60 characters); each saved turn moves it to the top.
+- `GET /assistant/conversations/:id`: `{ id, title, messages: [{ role, text, tools }] }` with only the user's messages and each final answer with the names of the tools used for it. Tool calls, their arguments and raw tool output stay on the server.
+- `DELETE /assistant/conversations/:id`: `204`; its messages are deleted with it.
 
 A seventh tool, `web_search` (`src/chat/webSearch.ts`), is not an account tool: it asks Gemini with Google Search grounding for current public information and returns a short answer with source links (Google redirect links, titled by site). It runs as its own request, so it works next to the Google tools and also when no Google account is connected. The search sees only the query the model wrote, and the system prompt tells the model never to put private details in it. Limits are in `chat.webSearch` (20 s, 4000 characters, 5 sources).
 

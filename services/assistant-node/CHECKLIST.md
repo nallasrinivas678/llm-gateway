@@ -31,7 +31,8 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 
 - [x] How the chat service stores conversations: decided on the signed-in user's own token (row-level security does the checking; only the public Supabase key is needed)
 - [x] Email: draft-only. The assistant can create drafts, never send (decided 2026-11-20)
-- [x] No confirm step before the assistant creates a calendar event or edits a Google Doc (decided 2026-11-20); the web app needs no change for this
+- [x] Approve every write: the assistant proposes, the user approves each change (tasks, calendar events, email drafts, Google Docs) before it runs (decided 2026-11-20, replacing the earlier "no confirm step"); auto-approving small writes can come once the agent evals show it is reliable. Design in `AGENT_HARNESS_PLAN.md` A2
+- [x] Chat page with a list of saved conversations first; a drawer reachable from every page later (decided 2026-11-20)
 - [x] Fly app `assistant-service` in a US region: `iad` (Ashburn, Virginia), already set in `fly.toml` (decided 2026-11-20)
 - [ ] Billing for the Gemini key used by the evals, or spreading eval runs over days: later (decided 2026-11-20); until then the answer eval stops when the free quota runs out
 
@@ -50,13 +51,19 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Per-user rate limit on chat (10 a minute; the .NET chat has none)
 - [x] Timeout on the model call and on each tool call (60 seconds per run, 20 per tool call; a slow run answers 504)
 - [x] digital-garden: chat page `/app/chat` (branch `srnalla-chat-screen`): `VITE_CHAT_API_URL` points it at the Node service (falls back to llm-gateway), and each answer shows the tools used in plain words. Checked in the real app on localhost: a web search answer and a task count came back through the Node service with a real sign-in
+- [x] Saved conversations: `GET /assistant/conversations`, `GET /assistant/conversations/:id`, `DELETE /assistant/conversations/:id`; a new conversation is titled with its first message, and each saved turn moves it to the top. The page gets only the user's messages and the final answers with tool names, never tool output. No migration needed (the table already had `title` and `updated_at`)
+- [x] digital-garden (branch `srnalla-chat-history`): conversation list beside the chat, the open conversation in the address (`?c=<id>`) so a refresh keeps it, two-click delete
+- [ ] Live check of the conversation list with a real sign-in (list, reopen after refresh, delete)
+- [ ] Send history by size instead of message count (one tool result can be large); a summary of older messages only if real chats need it
 
 ## 4. Other connectors (dev)
 
 - [x] Task tools: `list_tasks`, `create_task`, `complete_task` on the web app's `events` table (tasks are `events` with `type = 'task'`; there is no separate `tasks` table). Unit tested; `list_tasks` checked live through the chat page (read only); `create_task` and `complete_task` not tried live yet
 - [ ] `draft_tailored_application`: still has no written design (what it reads, what it saves); decide that before building it
 - [x] Web search (Gemini Google Search grounding): `web_search` chat tool, checked once against the real API
-- [x] Approval flow for tools that change things: not needed, per the decision above (writes run when the model calls them; email stays draft-only)
+- [ ] Approval flow for tools that change things (A2): `agent_actions` table, write tools save a pending action, approve and reject endpoints, cards in the chat page. Until then the write tools run when the model calls them
+- [ ] Run record (A3): `agent_runs` table, one row per turn with no message text
+- [ ] Agent evals (A4): about 25 scenarios on a fake backend
 
 ## 5. Daily summary (dev)
 
