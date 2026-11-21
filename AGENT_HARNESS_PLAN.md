@@ -105,6 +105,7 @@ Each phase ends with a stop for review.
 * **A4, agent evals.** Fake backend, scenario format, scoring, 25 scenarios, first baseline recorded in this file. Scenarios for each tool group are written alongside A1 and A2, so they are measured as they land.
 * **A5, screen.** The chat drawer with pending action cards in digital-garden behind a flag.
 * **A6, live check and switch-on.** A real conversation end to end (read, propose, approve, check the data changed, reject another), a second user cannot see the first user's actions, then point the web app at it. The Fly deploy stays last, as with the other features.
+  Done on 2026-11-20 for tasks (see `services/assistant-node/CHECKLIST.md` section 4): propose, approve, reject, reopen after a reload, delete, the run record (including an `error` run) and a second user seeing nothing. Not yet: the Google write tools (draft, event, doc), because the Gemini quota ran out.
 
 ## Decisions needed (you)
 

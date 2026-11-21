@@ -70,8 +70,8 @@ All lines exist today for chat. The daily summary reads Google and calls Gemini 
 | Google token service and Postgres store | `src/google-tokens/` | built, tested (live) |
 | Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt, task tools, web search | `src/chat/` | built, tested; checked live with Gemini, Google and a real sign-in |
 | Chat endpoints (`POST /assistant/chat`, saved conversations list, read and delete) and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
-| Approval of writes: proposals saved in `agent_actions`, approve and reject endpoints | `src/chat/approval.ts`, `src/chat/actionStore.ts` | built, tested; not tried live yet |
-| Run record: one `agent_runs` row per chat turn (time, steps, tools, outcome; no text) | `src/chat/runRecord.ts` | built, tested; not tried live yet |
+| Approval of writes: proposals saved in `agent_actions`, approve and reject endpoints | `src/chat/approval.ts`, `src/chat/actionStore.ts` | built, tested; checked live for tasks (Google tools not yet) |
+| Run record: one `agent_runs` row per chat turn (time, steps, tools, outcome; no text) | `src/chat/runRecord.ts` | built, tested; checked live |
 | Checks on Google write calls before they are proposed | `src/google-mcp/writeChecks.ts` | built, tested |
 | Agent evals: harness tier (scripted model, in `npm test`) and model tier (real model, on demand) | `services/assistant-node/evals/agent/` | built; the model tier has run 4 of 14 scenarios so far (quota) |
 | Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
