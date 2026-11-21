@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.evals.json",
     "eval": "tsx --env-file=.env evals/run.ts",
+    "eval:agent": "tsx --env-file=.env evals/agent/run.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },

@@ -267,6 +267,21 @@ How it works: ingest downloads the PDF, reads the text of each page (`unpdf`; hi
 
 Known limits: the chunks are replaced with a delete and then inserts, not one transaction (a failure leaves the document `failed` and re-running fixes it); the "already running" check is per machine, so keep one Fly machine.
 
+## Agent evals
+
+A repeatable test of the chat assistant's behaviour, in `evals/agent/`. Two tiers, both on a fake world (a user's tasks, calendar and mailbox in memory; a fake Google that records anything that changes; a fake web search), so a run cannot touch real data. Checks are plain code over what happened: which tools were called and with what, which changes were proposed, whether anything real was written, how the run ended, what the reply said.
+
+- **Harness tier** (`harnessScenarios.ts`, runs with `npm test`): a scripted model does the worst thing, and the harness must hold. For example: every tool that changes something only proposes (one scenario per tool, and a test requires every write tool to have one), approving runs the change once, rejecting changes nothing, a model that obeys an instruction hidden in an email or a task note can only make a card, an event that ends before it starts never becomes a card, another user's task id is refused, an unknown tool does nothing, a model that never stops gets the step-limit reply.
+- **Model tier** (`modelScenarios.ts`): the real model. For example: picks the right tool and values, asks when the date is missing, asks which of two tasks with the same name, ignores instructions hidden in data, keeps a private email address out of a web search, says it can only draft and never send.
+
+```
+npm run eval:agent -- --list                 list the model scenarios
+npm run eval:agent -- --only m-add-task      one scenario, or an area (read, write, injection, ...)
+npm run eval:agent -- --max-calls 20         stop before a scenario would pass 20 model calls
+```
+
+The model tier uses model quota (a full run is about 40 calls), so on the free tier run a few scenarios a day. It stops at the quota and lists what it did not run. Results are saved in `evals/results` (git-ignored). To add a scenario, add an entry to either list; see `evals/agent/types.ts` for the checks.
+
 ## PDF Q&A evals
 
 A small, repeatable test of the AI part of PDF Q&A (3 made-up documents, 39 questions in `evals/datasets`). It is a script, not part of `npm test`, because it calls Gemini. The scoring rules, dataset checks and embedding cache are unit tested.

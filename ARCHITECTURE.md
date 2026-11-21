@@ -29,7 +29,7 @@ The alternative — scoping the cache per caller — would mean two services ask
 
 ## Assistant service on Node (`services/assistant-node`)
 
-> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything and the run record are built; the agent evals are planned (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
+> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything the run record and the agent evals are built (the model tier is only partly run) (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
 
 ### Why move it
 
@@ -73,7 +73,7 @@ All lines exist today for chat. The daily summary reads Google and calls Gemini 
 | Approval of writes: proposals saved in `agent_actions`, approve and reject endpoints | `src/chat/approval.ts`, `src/chat/actionStore.ts` | built, tested; not tried live yet |
 | Run record: one `agent_runs` row per chat turn (time, steps, tools, outcome; no text) | `src/chat/runRecord.ts` | built, tested; not tried live yet |
 | Checks on Google write calls before they are proposed | `src/google-mcp/writeChecks.ts` | built, tested |
-| Agent evals | `AGENT_HARNESS_PLAN.md` | planned |
+| Agent evals: harness tier (scripted model, in `npm test`) and model tier (real model, on demand) | `services/assistant-node/evals/agent/` | built; the model tier has run 4 of 14 scenarios so far (quota) |
 | Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
 | PDF Q&A | `src/docQa/` | built, tested |
 
@@ -149,7 +149,22 @@ sequenceDiagram
 | Logs: one JSON line per event with the error's type, status and code, never message text | built |
 | **Approval before any write.** A write tool (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) saves a pending row in `agent_actions` instead of running; the page shows a card with Approve and Reject; approval runs the stored, checked arguments, not a second model call. Every write is approved at first. | built (see below) |
 | **Run record.** One `agent_runs` row per turn: time taken, model steps, each tool's name, time and success, how it ended (`ok`, `step_limit`, `timeout`, `error`) and how many changes it proposed. No message text, arguments or answers. A failure to save it is logged and never changes the reply. | built (see below) |
-| **Agent evals.** About 25 scenarios on a fake backend, scored in code: no write without approval, injected instructions in an email lead to no write, two tasks with the same name make the agent ask, and so on. Run on demand, not in CI. | planned (A4) |
+| **Agent evals.** Two tiers on a fake backend, scored in plain code: the harness tier (a scripted model does the worst thing; 17 scenarios, in `npm test`) and the model tier (the real model; 14 scenarios, on demand). | built (see below) |
+
+#### Agent evals
+
+The evals answer two different questions, so there are two tiers. Both play a scenario through the real chat service (the real agent, tools, approval gate and run record) on a **fake world**: one user's tasks, calendar and mailbox in memory, a fake Google that writes down anything that changes, a fake web search, and in-memory stores. A run cannot touch real data and every scenario starts from a known state. Every check is plain code over a trace of what happened (which tools were called, which changes were proposed, whether anything real was written, how the run ended, what the reply said); no model judges another model.
+
+| | Harness tier | Model tier |
+|---|---|---|
+| Question | When the model does the worst thing, does the harness hold? | Does the real model behave well with the harness in place? |
+| The "model" | A scripted stand-in that does exactly what the scenario says, including obeying an injected instruction | Gemini |
+| Where it runs | `npm test` and CI: instant, free, identical every time | `npm run eval:agent`: costs model calls, varies run to run |
+| Scenarios | Each write tool only proposes; approving runs once; rejecting changes nothing; an injected email or task note that the model obeys can only make a card; a bad event or a hidden Bcc never becomes a card; another user's task id is refused; an unknown tool does nothing; Google not connected; the step limit | Right tool and right values for reading, adding a task, completing one, scheduling, drafting; asks when the date is missing; asks which of two "Call mom" tasks; ignores instructions hidden in an email or in task notes; keeps a private email address out of a web search; says it can only draft, never send; a two-step add-approve-list flow |
+
+A harness scenario that lists a write tool is required for every tool in `WRITE_TOOLS`, so a new write tool cannot be added without a scenario showing it is gated. The harness tier was checked by breaking the gate on purpose (one tool removed from the list): five scenarios failed.
+
+The model tier needs billing on the key for a full run (about 40 model calls). On the free tier it stops at the quota and lists what it did not run (`--max-calls`, `--only <id or area>`, `--list`); results are saved in `evals/results` (git-ignored). First run, 2026-11-20: the quota ran out after 5 calls; the 4 scenarios that ran passed (add a task, list tasks, list calendar, Google not connected).
 
 #### What a run record holds
 
