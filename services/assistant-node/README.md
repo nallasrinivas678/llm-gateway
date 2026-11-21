@@ -301,13 +301,38 @@ Asks the questions through the real prompt and checks each answer in code: requi
 
 ## What is an MCP server here?
 
-An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers calendar tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
+An MCP server is a small program that offers tools to an AI agent. Ours, in `src/google-mcp`, offers Calendar, Gmail and Docs tools. The agent sees each tool's name, description and input rules, and decides when to call it. Rules we follow:
 
 - The user's Google token is handed to the server for one request only and is never shared between users.
 - Tool errors come back as short readable messages. Google's raw error text is not passed on.
 - Google calls live in `calendar.ts`, `gmail.ts` and `docs.ts`, so they can be tested without MCP.
 - There is no tool that sends email. `create_draft` saves a draft and the user sends it from Gmail.
 - Text coming back from Gmail and Docs is data, not instructions. Tool descriptions say so.
+
+### Client, server and protocol
+
+The server and its client run in the same Node process (`connectGoogleTools` in `src/chat/chatService.ts`):
+
+```ts
+const server = createGoogleMcpServer(googleToken, …);                       // owns the tools and the user's token
+const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();      // two ends of one in-memory pipe
+await Promise.all([server.connect(serverSide), client.connect(clientSide)]);  // plug each in, run the MCP handshake
+```
+
+* **Server** (`server.ts`) offers the tools and answers requests. **Client** (the MCP `Client`, used by `mcpTools.ts`) asks: `listTools()` and `callTool()`.
+* **`clientSide` and `serverSide`** are two transport objects that point at each other: what the client sends into one comes out of the other, and the reverse. `connect` plugs each role into its end and runs the handshake (`initialize`, then the server's name and capabilities).
+* **Protocol:** the messages are JSON-RPC 2.0 (`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_event","arguments":{…}}}`; replies carry `result` or `error`). The transport is in-memory: one end hands the message object straight to the other. There is no TCP, port or HTTP, and nothing leaves the process. The other MCP transports are stdio and Streamable HTTP (which is TCP); moving the Google server out of the process would swap the transport and leave the tools and `mcpTools.ts` unchanged.
+* The only network traffic is the tool's own HTTPS call to Google (`googleapis.com`), which is ordinary REST, not MCP.
+
+### How the tools reach the agent
+
+1. **Listing.** `loadMcpTools` (`src/chat/mcpTools.ts`) calls `client.listTools()` (JSON-RPC `tools/list`). The server answers with each tool's name, description and JSON schema (built from the zod shapes in `server.ts`; for writes, from `writeChecks.ts`).
+2. **Wrapping.** For each listed tool it makes a LangChain `DynamicStructuredTool` with the same name, description and schema. Its `func` calls `client.callTool({ name, arguments })` and flattens the reply to text; `isError` becomes "The tool call failed: ...". (`@langchain/mcp-adapters`' own loader fails at runtime against the MCP SDK version we install, so this small converter is ours.)
+3. **Handing over.** In `chat()` the Google tools, `web_search` and the task tools are put in one list and wrapped twice: `withApproval` (`approval.ts`) swaps the `func` of write tools for one that saves a pending action, and `withTiming` (`runRecord.ts`) records each call for the run record. Only `func` changes, so the model cannot tell. The list goes to `createAgent({ model, tools, systemPrompt })`.
+4. **What the model sees.** The model never asks for the tool list or speaks MCP. The agent sends the tools' names, descriptions and schemas to Gemini as function declarations with every model request of the turn. The model replies with text or a function call (`create_event {…}`), and only declared tools can be called. The list is rebuilt for every request, because the server is built per request with that user's token; if Google is not connected the Google tools are not in it.
+5. **Calling.** A read tool runs at once: agent, `withTiming`, MCP `tools/call`, the Google REST call. A write tool only proposes; when the user approves, `runApproved` builds a new server and client and runs the stored arguments through the same MCP tool.
+
+The step-by-step version with example data (the Google requests for an event and a draft) is in `ARCHITECTURE.md`, "Walkthrough: one request through `server.ts` and `mcpTools.ts`".
 
 ## Checks and deploys (GitHub Actions)
 
