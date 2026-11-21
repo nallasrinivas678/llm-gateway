@@ -151,6 +151,154 @@ sequenceDiagram
 | **Run record.** One `agent_runs` row per turn: time taken, model steps, each tool's name, time and success, how it ended (`ok`, `step_limit`, `timeout`, `error`) and how many changes it proposed. No message text, arguments or answers. A failure to save it is logged and never changes the reply. | built (see below) |
 | **Agent evals.** Two tiers on a fake backend, scored in plain code: the harness tier (a scripted model does the worst thing; 17 scenarios, in `npm test`) and the model tier (the real model; 14 scenarios, on demand). | built (see below) |
 
+#### Worked example: where the harness sits around the Google tools
+
+The user types: *"Draft an email to Priya about Friday's standup, and put a 30-minute event on my calendar tomorrow at 10."* Both are writes, so both end as cards. The model never talks to Google directly; every call goes through the harness, and the Google tools are reached through the in-memory MCP server.
+
+```mermaid
+sequenceDiagram
+    participant P as Chat page
+    participant N as chatService (harness)
+    participant G as Gemini
+    participant W as withTiming / withApproval
+    participant M as Google MCP server (in memory)
+    participant DB as Supabase (as the user)
+
+    P->>N: message + login token
+    N->>DB: load history (RLS)
+    Note over N: tools = Google (MCP) + web_search + task tools<br/>writes wrapped in withApproval, all in withTiming<br/>limits: 5 rounds, 60 s run, 20 s tool
+    N->>G: system prompt + history + message
+    G-->>N: call create_draft(to, subject, body)
+    N->>W: run the tool
+    W->>W: writeChecks: field shapes, no line breaks in to/subject
+    alt a rule is broken
+        W-->>G: plain refusal naming the field, so the model can fix it
+    else valid
+        W->>DB: insert agent_actions (pending, expires in 1 day)
+        W-->>G: "Proposed, waiting for the user's approval"
+    end
+    G-->>N: call create_event(...), handled the same way
+    G-->>N: final answer
+    N->>DB: save messages, move conversation to top, insert agent_runs (in finally)
+    N-->>P: reply + pendingActions [draft, event]
+    P->>N: POST /assistant/actions/:id/approve (one card)
+    N->>DB: claim row: pending and not expired becomes running
+    N->>M: run the STORED arguments through the real tool (checked again)
+    M-->>N: result text, or a failure (isError)
+    N->>DB: status done or failed, short readable result
+```
+
+How the pieces fit:
+
+* **The MCP server is a tool boundary, not a service.** `src/google-mcp/server.ts` registers the Gmail, Calendar and Docs tools with their input schemas (the shapes come from `writeChecks.ts`, the same ones the proposal step uses). A fresh server per request holds that user's Google token in its closure, and the chat connects an MCP client to it over an in-memory transport. `mcpTools.ts` turns each MCP tool into a LangChain tool; a tool that answers with `isError` reaches the model as "The tool call failed: ...", so it can recover.
+* **Reads and writes take different paths.** A read (`list_events`, `search_emails`, `read_doc`) goes agent, `withTiming`, MCP tool, Google, and runs at once. A write goes agent, `withTiming`, `withApproval`, a pending row; the MCP tool is only reached when the user approves.
+* **Approval does not ask the model again.** The card is built from the stored arguments and approval runs those same arguments, so a change cannot differ from what the user read.
+* **Every turn leaves a record,** including a refused call, a timeout or a step-limit stop: `agent_runs` gets one row from a `finally`, with tool names, times and outcome, and no message text.
+* **Not built yet:** the Google write tools (draft, event, doc) are covered by the harness-tier evals but have not been run live end to end, and Google tokens are stored unencrypted.
+
+#### Walkthrough: one request through `server.ts` and `mcpTools.ts`
+
+The example data below is illustrative (the shapes come from the code; the Google write tools have not been captured in a live run). User: *"Set up a follow-up with Priya next Tuesday at 2pm for 30 minutes, and email her about it."* Email is draft-only, so "email her" becomes a Gmail draft the user sends themselves.
+
+**1. When the model learns what tools exist.** The model never asks for the tool list and never speaks MCP. Our code does, once per request, before the model is called:
+
+```mermaid
+sequenceDiagram
+    participant N as chatService
+    participant C as MCP client (mcpTools.ts)
+    participant S as MCP server (server.ts)
+    participant L as LangChain agent
+    participant G as Gemini
+
+    N->>S: createGoogleMcpServer(googleToken)  (token only in its closure)
+    N->>C: connect over an in-memory linked pair
+    C->>S: tools/list
+    S-->>C: name + description + JSON schema for each tool
+    C-->>N: loadMcpTools wraps each one as a LangChain tool
+    N->>L: createAgent({ tools: withTiming(withApproval(...)) })
+    L->>G: model request = messages + tool declarations (every round)
+    G-->>L: answer, or a functionCall naming one of those tools
+```
+
+* `tools/list` answers with one entry per tool; the schema is the zod shape in `server.ts` (for writes, from `writeChecks.ts`) turned into JSON schema:
+
+  ```json
+  {"name":"create_event","description":"Create an event on the user's primary Google Calendar.",
+   "inputSchema":{"type":"object","properties":{
+     "summary":{"type":"string","minLength":1},
+     "start":{"type":"string","format":"date-time","description":"ISO 8601 with offset, e.g. 2026-11-20T15:00:00-08:00"},
+     "end":{"type":"string","format":"date-time"},
+     "description":{"type":"string"}},"required":["summary","start","end"]}}
+  ```
+* The agent sends the declarations to Gemini with **every** model request of the turn (the first one, and each one after tool results come back), next to the system prompt and messages. Simplified:
+
+  ```json
+  {"systemInstruction":"…Today is 2026-11-21… Google is connected… changes need approval…",
+   "contents":[ …recent history…, {"role":"user","parts":[{"text":"Set up a follow-up with Priya next Tuesday at 2pm…"}]} ],
+   "tools":[{"functionDeclarations":[
+      {"name":"create_event","description":"…","parameters":{ …the schema above… }},
+      {"name":"create_draft", …}, {"name":"list_events", …}, {"name":"search_emails", …},
+      {"name":"read_doc", …}, {"name":"append_to_doc", …}, {"name":"web_search", …}, {"name":"create_task", …} ]}]}
+  ```
+* The list is rebuilt each request because the server is built per request with that user's token. If the user has not connected Google, there is no server, the Google tools are simply not in the list, and the system prompt says so.
+* The model's only output is text or a `functionCall` such as `{"name":"create_event","args":{…}}`. It cannot call anything that was not declared.
+
+**2. The model answers with two calls, and the harness intercepts the writes.**
+
+```json
+create_event  {"summary":"Follow-up with Priya","start":"2026-11-24T14:00:00-08:00","end":"2026-11-24T14:30:00-08:00"}
+create_draft  {"to":"priya@example.com","subject":"Follow-up meeting Tuesday at 2pm","body":"Hi Priya,\n\nI've set up a 30-minute follow-up for Tuesday at 2pm. …"}
+```
+
+`withApproval` runs `writeProblem()` (shapes, end after start, no line breaks in `to` or `subject`), inserts an `agent_actions` row with `status: "pending"`, and gives the model "This change is waiting for the user's approval; it has NOT been made yet…". MCP is not called yet. The service answers the page:
+
+```json
+{"conversationId":"c7e1…","reply":"I've proposed a 30-minute event on Tue Nov 24 at 2pm and a draft email to Priya. Approve them below. I can only draft the email, so you'll send it from Gmail.",
+ "toolCallsExecuted":["create_event","create_draft"],
+ "pendingActions":[
+  {"id":"a1…","tool":"create_event","preview":"Add the calendar event \"Follow-up with Priya\" from 2026-11-24T14:00:00-08:00 to 2026-11-24T14:30:00-08:00"},
+  {"id":"a2…","tool":"create_draft","preview":"Save an email draft to priya@example.com, subject \"Follow-up meeting Tuesday at 2pm\" (it is not sent)"}]}
+```
+
+**3. Approving reaches Google through MCP.** `POST /assistant/actions/a1…/approve` claims the row (`pending` becomes `running`), then `runApproved` builds a **new** server and client (the Google token is read again and refreshed if it has under 60 seconds left) and invokes the tool with the stored arguments:
+
+| Hop | Data |
+|---|---|
+| `mcpTools.ts` `client.callTool` | `{"method":"tools/call","params":{"name":"create_event","arguments":{"summary":"Follow-up with Priya","start":"…14:00:00-08:00","end":"…14:30:00-08:00"}}}` |
+| `server.ts` | checks the schema again, then `assertEventTimes`, then `createEvent()` |
+| `calendar.ts` to Google | `POST https://www.googleapis.com/calendar/v3/calendars/primary/events` with `Authorization: Bearer <user's Google token>` and body `{"summary":…,"start":{"dateTime":"…"},"end":{"dateTime":"…"}}` |
+| Google back | a large event object; `toCalendarEvent` keeps `summary`, `start`, `end` |
+| `server.ts` to `mcpTools.ts` | `{"content":[{"type":"text","text":"Created: {\"summary\":\"Follow-up with Priya\",…}"}]}` |
+| `chatService` | `isFailureText` is false, so the row becomes `done`; the page gets `{"id":"a1…","status":"done","result":"Created: …"}` |
+
+The draft goes the same way, ending in `gmail.ts`:
+
+```http
+POST https://gmail.googleapis.com/gmail/v1/users/me/drafts
+{"message":{"raw":"<base64url of the MIME message>"}}
+```
+```
+To: priya@example.com
+Subject: Follow-up meeting Tuesday at 2pm
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+<base64 of the body>
+```
+
+Google answers `{"id":"r-123…"}` and the tool returns "Draft created (id r-123…). It has not been sent; the user can review and send it from Gmail."
+
+**4. Failure.** A Google 403 throws `GoogleApiError("Calendar", 403)`; `run()` in `server.ts` turns it into `isError: true` with "Google Calendar rejected the request. The user may need to reconnect their Google account." (Google's body is never kept). `mcpTools.ts` prefixes "The tool call failed: ", `isFailureText` matches, and the row ends `failed` with that short text.
+
+| File | Job |
+|---|---|
+| `server.ts` | Declares each tool and its schema, holds the Google token in a closure, turns errors into `isError` results |
+| `calendar.ts`, `gmail.ts`, `docs.ts` | Build the real Google REST requests and cut the responses down |
+| `mcpTools.ts` | Reads `listTools`, wraps `callTool` as LangChain tools with a timeout, returns failures as text |
+| `chatService.ts` | Connects server and client per request; runs approved actions through the same tools |
+| `approval.ts` | Intercepts write tools so MCP is only reached after approval |
+
 #### Agent evals
 
 The evals answer two different questions, so there are two tiers. Both play a scenario through the real chat service (the real agent, tools, approval gate and run record) on a **fake world**: one user's tasks, calendar and mailbox in memory, a fake Google that writes down anything that changes, a fake web search, and in-memory stores. A run cannot touch real data and every scenario starts from a known state. Every check is plain code over a trace of what happened (which tools were called, which changes were proposed, whether anything real was written, how the run ended, what the reply said); no model judges another model.
