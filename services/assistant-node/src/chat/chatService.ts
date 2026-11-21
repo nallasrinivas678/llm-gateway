@@ -8,6 +8,9 @@ import type { Settings } from "../config.js";
 import { createGoogleMcpServer } from "../google-mcp/server.js";
 import type { FetchFn } from "../google-mcp/common.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
+import { logError } from "../log.js";
+import type { ActionStore, PendingAction } from "./actionStore.js";
+import { ActionNotFoundError, ActionNotPendingError, isFailureText, previewFor, withApproval } from "./approval.js";
 import type { ConversationStore } from "./conversationStore.js";
 import { messageToStored, messagesToStored, type StoredMessage } from "./messageMapper.js";
 import { trimHistory } from "./history.js";
@@ -30,6 +33,8 @@ export interface ChatDeps {
   webSearch?: WebSearchFn;
   // When given, the model also gets the user's TaskTide task tools.
   openTasks?: (userId: string, jwt: string) => TaskStore;
+  // When given, a tool that changes something only proposes the change; the user approves it.
+  openActions?: (userId: string, jwt: string) => ActionStore;
   now?: () => Date;
 }
 
@@ -45,6 +50,14 @@ export interface ChatResult {
   conversationId: string;
   reply: string;
   toolCallsExecuted: string[];
+  // Changes the assistant proposed in this turn, waiting for the user's approval.
+  pendingActions: PendingAction[];
+}
+
+export interface ActionOutcome {
+  id: string;
+  status: "done" | "failed" | "rejected";
+  result: string | null;
 }
 
 // A saved message as the chat page shows it: what the user said, and each final answer with the
@@ -59,6 +72,8 @@ export interface ConversationView {
   id: string;
   title: string | null;
   messages: ViewMessage[];
+  // Proposed changes still waiting, so reopening the conversation shows the cards again.
+  pendingActions: PendingAction[];
 }
 
 const TITLE_MAX_CHARS = 60;
@@ -106,6 +121,30 @@ export function createChatService(deps: ChatDeps) {
     return { tools, close: () => client.close() };
   }
 
+  // Finds the real tool (not the proposing one) and runs it with the stored arguments. The tool
+  // checks the arguments again, so a task that has gone since the proposal gives a clear answer.
+  async function runApproved(userId: string, jwt: string, toolName: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
+    let google: Awaited<ReturnType<typeof connectGoogleTools>> | null = null;
+    try {
+      const own = deps.openTasks ? taskTools(deps.openTasks(userId, jwt)) : [];
+      let tools = own;
+      if (!own.some((t) => t.name === toolName)) {
+        google = await connectGoogleTools(await deps.getGoogleToken(userId));
+        tools = google.tools;
+      }
+      const tool = tools.find((t) => t.name === toolName);
+      if (!tool) return { ok: false, text: "That change is no longer supported." };
+      const text = String(await tool.invoke(args));
+      return { ok: !isFailureText(text), text };
+    } catch (error) {
+      if (error instanceof GoogleReconnectRequired) return { ok: false, text: "Google needs to be connected again. Reconnect it, then ask again." };
+      logError("running an approved action failed", error);
+      return { ok: false, text: "The change could not be made." };
+    } finally {
+      await google?.close();
+    }
+  }
+
   return {
     async chat(input: ChatInput): Promise<ChatResult> {
       const store = deps.openStore(input.userId, input.jwt);
@@ -123,10 +162,31 @@ export function createChatService(deps: ChatDeps) {
       }
 
       try {
+        const tasks = deps.openTasks?.(input.userId, input.jwt);
+        const actions = deps.openActions?.(input.userId, input.jwt);
+        const pendingActions: PendingAction[] = [];
+        const allTools = [...(google?.tools ?? []), ...(deps.webSearch ? [webSearchTool(deps.webSearch)] : []), ...(tasks ? taskTools(tasks) : [])];
         const agent = createAgent({
           model: deps.model,
-          tools: [...(google?.tools ?? []), ...(deps.webSearch ? [webSearchTool(deps.webSearch)] : []), ...(deps.openTasks ? taskTools(deps.openTasks(input.userId, input.jwt)) : [])],
-          systemPrompt: buildSystemPrompt({ today: now().toISOString().slice(0, 10), googleConnected: google !== null, webSearch: deps.webSearch !== undefined, tasks: deps.openTasks !== undefined }),
+          // With approval on, a tool that changes something saves a proposal instead of running.
+          tools: actions
+            ? withApproval(allTools, {
+                describe: async (tool, args) => {
+                  if (tool !== "complete_task") return { preview: previewFor(tool, args) };
+                  const task = tasks ? await tasks.get(String(args.taskId)) : null;
+                  return task ? { preview: previewFor(tool, args, task.title) } : { refusal: "No task with that id was found." };
+                },
+                propose: (tool, args, preview) => actions.propose({ conversationId, tool, args, preview }),
+                onProposed: (action) => pendingActions.push(action),
+              })
+            : allTools,
+          systemPrompt: buildSystemPrompt({
+            today: now().toISOString().slice(0, 10),
+            googleConnected: google !== null,
+            webSearch: deps.webSearch !== undefined,
+            tasks: deps.openTasks !== undefined,
+            approval: actions !== undefined,
+          }),
         });
 
         const userMessage = new HumanMessage(input.message);
@@ -150,7 +210,7 @@ export function createChatService(deps: ChatDeps) {
         const last = [...produced].reverse().find((m) => m instanceof AIMessage);
         const reply = (last ? messageToStored(last)?.content : "")?.trim() || EMPTY_REPLY;
         const toolCallsExecuted = [...new Set(stored.flatMap((m) => m.toolCalls?.map((c) => c.ToolName) ?? []))];
-        return { conversationId, reply, toolCallsExecuted };
+        return { conversationId, reply, toolCallsExecuted, pendingActions };
       } finally {
         await google?.close();
       }
@@ -163,7 +223,40 @@ export function createChatService(deps: ChatDeps) {
     async get(userId: string, jwt: string, conversationId: string): Promise<ConversationView> {
       const store = deps.openStore(userId, jwt);
       const { id, title } = await store.getConversation(conversationId);
-      return { id, title, messages: toViewMessages(messagesToStored(await store.loadMessages(id))) };
+      const pendingActions = (await deps.openActions?.(userId, jwt).listPending(id)) ?? [];
+      return { id, title, messages: toViewMessages(messagesToStored(await store.loadMessages(id))), pendingActions };
+    },
+
+    // Runs a proposed change as the user: the stored arguments, through the real tool. The action is
+    // claimed first with one conditional update, so a double click cannot run it twice.
+    async approve(userId: string, jwt: string, actionId: string): Promise<ActionOutcome> {
+      const actions = deps.openActions?.(userId, jwt);
+      if (!actions) throw new ActionNotFoundError();
+      const found = await actions.get(actionId);
+      if (!found) throw new ActionNotFoundError();
+      const action = await actions.claim(actionId);
+      if (!action) throw new ActionNotPendingError(found.status === "pending" ? "expired" : found.status);
+
+      const { ok, text } = await runApproved(userId, jwt, action.tool, action.args);
+      const status = ok ? "done" : "failed";
+      try {
+        await actions.finish(actionId, status, text);
+      } catch (error) {
+        // The change was made (or not); only the record failed. The user still gets the outcome.
+        logError("recording an action outcome failed", error);
+      }
+      return { id: actionId, status, result: text };
+    },
+
+    async reject(userId: string, jwt: string, actionId: string): Promise<ActionOutcome> {
+      const actions = deps.openActions?.(userId, jwt);
+      if (!actions) throw new ActionNotFoundError();
+      if (!(await actions.reject(actionId))) {
+        const found = await actions.get(actionId);
+        if (!found) throw new ActionNotFoundError();
+        throw new ActionNotPendingError(found.status);
+      }
+      return { id: actionId, status: "rejected", result: null };
     },
 
     async remove(userId: string, jwt: string, conversationId: string) {

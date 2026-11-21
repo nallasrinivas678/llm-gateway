@@ -61,7 +61,8 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Task tools: `list_tasks`, `create_task`, `complete_task` on the web app's `events` table (tasks are `events` with `type = 'task'`; there is no separate `tasks` table). Unit tested; `list_tasks` checked live through the chat page (read only); `create_task` and `complete_task` not tried live yet
 - [ ] `draft_tailored_application`: still has no written design (what it reads, what it saves); decide that before building it
 - [x] Web search (Gemini Google Search grounding): `web_search` chat tool, checked once against the real API
-- [ ] Approval flow for tools that change things (A2): `agent_actions` table, write tools save a pending action, approve and reject endpoints, cards in the chat page. Until then the write tools run when the model calls them
+- [x] Approval flow for tools that change things (A2, branches `srnalla-approval`): the five write tools (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) save a proposal in `agent_actions` instead of running; `POST /assistant/actions/:id/approve` and `/reject`; cards with Approve and Reject in the chat page; a proposal expires after a day; approving claims it with one conditional update so it cannot run twice. Unit tested; not tried live yet
+- [ ] Live check of approval with a real sign-in: ask for a task, see the card, reject one, approve one and see it in the Tasks page; then the same for an email draft (the only Google write checked end to end, since a draft is never sent)
 - [ ] Run record (A3): `agent_runs` table, one row per turn with no message text
 - [ ] Agent evals (A4): about 25 scenarios on a fake backend
 

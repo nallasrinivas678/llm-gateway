@@ -2,6 +2,7 @@
 // with fakes, and out of index.ts so startup stays a few lines.
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseActionStore } from "./chat/actionStore.js";
 import { createChatService, type ChatService } from "./chat/chatService.js";
 import { createSupabaseTaskStore } from "./chat/taskTools.js";
 import { createWebSearch } from "./chat/webSearch.js";
@@ -159,6 +160,7 @@ export function buildServices(config: Config): Services {
     settings: config.settings,
     getGoogleToken,
     openTasks: (userId, jwt) => createSupabaseTaskStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
+    openActions: (userId, jwt) => createSupabaseActionStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
     webSearch: createWebSearch({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, ...config.settings.chat.webSearch }),
     openStore: (userId, jwt) => createSupabaseConversationStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
   });

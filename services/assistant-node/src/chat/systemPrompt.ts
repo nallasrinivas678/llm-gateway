@@ -1,5 +1,5 @@
 // The instructions given to the model on every chat request (the .NET chat had none).
-export function buildSystemPrompt(options: { today: string; googleConnected: boolean; webSearch?: boolean; tasks?: boolean }): string {
+export function buildSystemPrompt(options: { today: string; googleConnected: boolean; webSearch?: boolean; tasks?: boolean; approval?: boolean }): string {
   const lines = [
     "You are TaskTide's assistant. Help the user with their calendar, email drafts and Google Docs using the tools you are given.",
     "- Use tools instead of guessing. Never invent events, emails or document content.",
@@ -17,6 +17,11 @@ export function buildSystemPrompt(options: { today: string; googleConnected: boo
   if (options.tasks) {
     lines.push(
       "- The user's TaskTide tasks (their to-do list, not Google Calendar events) are managed with list_tasks, create_task and complete_task. Dates are plain dates (YYYY-MM-DD). To complete a task, find its id with list_tasks first. A task needs a title and a due date: ask if either is missing.",
+    );
+  }
+  if (options.approval) {
+    lines.push(
+      "- Changes need the user's approval. When you call create_task, complete_task, create_event, create_draft or append_to_doc, the change is only proposed: the user sees an Approve and Reject card under your reply, and nothing happens until they approve. Say what you proposed in one short sentence and ask them to approve it on the card. Never say a change is done, added or saved until a tool result says so. Reading tools run straight away.",
     );
   }
   if (!options.googleConnected) {

@@ -29,7 +29,7 @@ The alternative — scoping the cache per caller — would mean two services ask
 
 ## Assistant service on Node (`services/assistant-node`)
 
-> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything is planned (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
+> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything is built; the run record and the agent evals are planned (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
 
 ### Why move it
 
@@ -70,7 +70,8 @@ All lines exist today for chat. The daily summary reads Google and calls Gemini 
 | Google token service and Postgres store | `src/google-tokens/` | built, tested (live) |
 | Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt, task tools, web search | `src/chat/` | built, tested; checked live with Gemini, Google and a real sign-in |
 | Chat endpoints (`POST /assistant/chat`, saved conversations list, read and delete) and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
-| Approval of writes, run record, agent evals | `AGENT_HARNESS_PLAN.md` | planned |
+| Approval of writes: proposals saved in `agent_actions`, approve and reject endpoints | `src/chat/approval.ts`, `src/chat/actionStore.ts` | built, tested; not tried live yet |
+| Run record, agent evals | `AGENT_HARNESS_PLAN.md` | planned |
 | Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
 | PDF Q&A | `src/docQa/` | built, tested |
 
@@ -116,7 +117,8 @@ sequenceDiagram
     end
     G-->>N: answer
     N->>DB: save the whole turn in one insert, then move the conversation to the top
-    N-->>P: {conversationId, reply, toolCallsExecuted}
+    N-->>P: {conversationId, reply, toolCallsExecuted, pendingActions}
+    Note over P,N: a change is only proposed; it waits for the user (next diagram)
 ```
 
 1. The login token is checked and the user id is taken from it. A per-user limit stops message floods (429).
@@ -143,11 +145,42 @@ sequenceDiagram
 | Limits: 5 tool rounds, 60 s per run, 20 s per tool, per-user message limit, message length limit, recent history only | built |
 | Email is draft-only; nothing in the service can send mail | built |
 | Logs: one JSON line per event with the error's type, status and code, never message text | built |
-| **Approval before any write.** A write tool (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) saves a pending row in `agent_actions` instead of running; the page shows a card with Approve and Reject; approval runs the stored, checked arguments, not a second model call. Every write is approved at first. | planned (A2) |
+| **Approval before any write.** A write tool (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) saves a pending row in `agent_actions` instead of running; the page shows a card with Approve and Reject; approval runs the stored, checked arguments, not a second model call. Every write is approved at first. | built (see below) |
 | **Run record.** One `agent_runs` row per turn: time taken, steps, tool names with time and outcome, how it ended. No message text and no arguments. | planned (A3) |
 | **Agent evals.** About 25 scenarios on a fake backend, scored in code: no write without approval, injected instructions in an email lead to no write, two tasks with the same name make the agent ask, and so on. Run on demand, not in CI. | planned (A4) |
 
-Until approval is built, the write tools run as soon as the model calls them.
+#### Approving a change
+
+```mermaid
+sequenceDiagram
+    participant P as Chat page
+    participant N as assistant-node
+    participant DB as Supabase (as the user, RLS)
+    participant X as Tool (Google or tasks)
+
+    Note over N,DB: during a turn: the model calls a write tool
+    N->>DB: insert agent_actions {tool, args, preview, status pending, expires in 1 day}
+    N-->>P: pendingActions [{id, tool, preview}] (card with Approve and Reject)
+    P->>N: POST /assistant/actions/:id/approve
+    N->>DB: one conditional update: pending and not expired becomes running
+    alt it was taken, decided or expired
+        N-->>P: 409 with a readable message
+    else claimed
+        N->>X: run the stored arguments as the user (the tool checks them again)
+        X-->>N: result text
+        N->>DB: status done or failed, with a short result
+        N-->>P: {id, status, result}
+    end
+```
+
+* **What is stored is what runs.** The card text is built from the stored arguments, and approval runs those same arguments through the real tool. It is not a second model call, so the model cannot change a change after the user has read it.
+* **Which tools:** `create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`. Reading tools (`list_events`, `search_emails`, `read_doc`, `list_tasks`, `web_search`) run straight away. Email stays draft-only.
+* **No double run:** approving claims the row with one conditional update (`status = 'pending'` and not expired), so a double click or two tabs run it once; the second gets 409.
+* **Expiry:** a proposal can be approved for one day; after that the answer is "This change expired. Ask the assistant again."
+* **A stale proposal fails clearly:** the tool checks its arguments again at approval time, so a task deleted since the proposal ends as `failed` with "No task with that id was found.", not as `done`. A complete-task proposal for a task that does not exist is refused when proposed.
+* **Failures are plain:** a failed change records a short readable result, never Google's or the database's own text.
+* **Cards survive a refresh:** the conversation's pending proposals come back with `GET /assistant/conversations/:id`.
+* **Chips say "Proposed":** the tool names under an answer read "Proposed a task", not "Added a task", because nothing is made until approval.
 
 ### How a user's Google token is handled
 

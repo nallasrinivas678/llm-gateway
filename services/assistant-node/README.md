@@ -183,6 +183,17 @@ Limits: 10 messages per user per minute (`chat.requestsPerMinute`), a whole run 
 
 Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), `504` the run took too long.
 
+### Approving changes
+
+The tools that change something (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) do not run when the model calls them. They save a proposal in `agent_actions` and the chat reply carries it: `pendingActions: [{ id, tool, preview }]`. The model is told it is waiting and must not say it is done. Reading tools run straight away.
+
+- `POST /assistant/actions/:id/approve`: runs the stored arguments as the user, through the real tool. Returns `{ id, status: "done" | "failed", result }` (a short readable result).
+- `POST /assistant/actions/:id/reject`: `{ id, status: "rejected", result: null }`.
+- `404` for someone else's action, a missing one or a malformed id. `409` when it was already decided, is being run, or expired (a proposal can be approved for one day).
+- `GET /assistant/conversations/:id` also returns `pendingActions`, so reopening a conversation shows its waiting cards again.
+
+Approving takes the proposal with one conditional update (pending and not expired), so a double click runs it once. The tool checks its arguments again when it runs, so a task that has gone since the proposal ends as `failed`, not `done`.
+
 ### Saved conversations
 
 For the chat page's list (Node service only; the .NET service has none). All three need the login token and read or delete as the user, so another user's conversation, a missing one and a malformed id all give `404`.

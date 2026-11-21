@@ -2,6 +2,7 @@ import { SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import type { ChatInput, ChatService } from "./chat/chatService.js";
+import { ActionNotFoundError, ActionNotPendingError } from "./chat/approval.js";
 import { ConversationNotFoundError } from "./chat/conversationStore.js";
 import { loadConfig } from "./config.js";
 
@@ -194,5 +195,80 @@ describe("saved conversations routes", () => {
     ["DELETE", `/assistant/conversations/${id}`],
   ])("%s %s answers 503 when chat is not configured", async (method, path) => {
     expect((await call(createApp(config, {}), method, path)).status).toBe(503);
+  });
+});
+
+describe("approve and reject routes", () => {
+  const id = "3f2b8c1e-5a4d-4e6f-8b7a-9c0d1e2f3a4b";
+
+  function fakeDecisions(fail?: Error) {
+    const calls: { op: string; userId: string; jwt: string; id: string }[] = [];
+    const decide = (op: string, status: "done" | "rejected") => async (userId: string, jwt: string, actionId: string) => {
+      calls.push({ op, userId, jwt, id: actionId });
+      if (fail) throw fail;
+      return { id: actionId, status, result: status === "done" ? "Created the task." : null };
+    };
+    const chat = { approve: decide("approve", "done"), reject: decide("reject", "rejected") } as unknown as ChatService;
+    return { chat, calls };
+  }
+
+  const call = async (app: ReturnType<typeof createApp>, path: string, withToken = true) =>
+    app.request(path, { method: "POST", headers: withToken ? { authorization: `Bearer ${await token()}` } : {} });
+
+  it("requires a login token", async () => {
+    const { chat } = fakeDecisions();
+    expect((await call(createApp(config, { chat }), `/assistant/actions/${id}/approve`, false)).status).toBe(401);
+  });
+
+  it("approves as the caller and returns the outcome", async () => {
+    const { chat, calls } = fakeDecisions();
+    const response = await call(createApp(config, { chat }), `/assistant/actions/${id}/approve`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id, status: "done", result: "Created the task." });
+    expect(calls[0]).toMatchObject({ op: "approve", userId, id });
+    expect(calls[0]?.jwt.split(".")).toHaveLength(3);
+  });
+
+  it("rejects as the caller", async () => {
+    const { chat, calls } = fakeDecisions();
+    const response = await call(createApp(config, { chat }), `/assistant/actions/${id}/reject`);
+    expect(await response.json()).toEqual({ id, status: "rejected", result: null });
+    expect(calls[0]).toMatchObject({ op: "reject", userId, id });
+  });
+
+  it.each(["approve", "reject"])("%s answers 404 for an id that is not a UUID, without touching the store", async (verb) => {
+    const { chat, calls } = fakeDecisions();
+    expect((await call(createApp(config, { chat }), `/assistant/actions/abc/${verb}`)).status).toBe(404);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["approve", "reject"])("%s answers 404 for an action that is not the caller's", async (verb) => {
+    const { chat } = fakeDecisions(new ActionNotFoundError());
+    const response = await call(createApp(config, { chat }), `/assistant/actions/${id}/${verb}`);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Action not found." });
+  });
+
+  it.each([
+    ["done", "This change was already done."],
+    ["rejected", "This change was already rejected."],
+    ["running", "This change was already running."],
+    ["expired", "This change expired. Ask the assistant again."],
+  ])("answers 409 for a change that is %s", async (status, message) => {
+    const { chat } = fakeDecisions(new ActionNotPendingError(status));
+    const response = await call(createApp(config, { chat }), `/assistant/actions/${id}/approve`);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: message });
+  });
+
+  it("answers 502 with a plain message when the database fails, and never shows its message", async () => {
+    const { chat } = fakeDecisions(new Error("relation secret_table does not exist"));
+    const response = await call(createApp(config, { chat }), `/assistant/actions/${id}/approve`);
+    expect(response.status).toBe(502);
+    expect(JSON.stringify(await response.json())).not.toContain("secret_table");
+  });
+
+  it("answers 503 when chat is not configured", async () => {
+    expect((await call(createApp(config, {}), `/assistant/actions/${id}/approve`)).status).toBe(503);
   });
 });
