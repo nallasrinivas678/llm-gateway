@@ -151,6 +151,51 @@ sequenceDiagram
 | **Run record.** One `agent_runs` row per turn: time taken, model steps, each tool's name, time and success, how it ended (`ok`, `step_limit`, `timeout`, `error`) and how many changes it proposed. No message text, arguments or answers. A failure to save it is logged and never changes the reply. | built (see below) |
 | **Agent evals.** Two tiers on a fake backend, scored in plain code: the harness tier (a scripted model does the worst thing; 17 scenarios, in `npm test`) and the model tier (the real model; 14 scenarios, on demand). | built (see below) |
 
+#### Worked example: where the harness sits around the Google tools
+
+The user types: *"Draft an email to Priya about Friday's standup, and put a 30-minute event on my calendar tomorrow at 10."* Both are writes, so both end as cards. The model never talks to Google directly; every call goes through the harness, and the Google tools are reached through the in-memory MCP server.
+
+```mermaid
+sequenceDiagram
+    participant P as Chat page
+    participant N as chatService (harness)
+    participant G as Gemini
+    participant W as withTiming / withApproval
+    participant M as Google MCP server (in memory)
+    participant DB as Supabase (as the user)
+
+    P->>N: message + login token
+    N->>DB: load history (RLS)
+    Note over N: tools = Google (MCP) + web_search + task tools<br/>writes wrapped in withApproval, all in withTiming<br/>limits: 5 rounds, 60 s run, 20 s tool
+    N->>G: system prompt + history + message
+    G-->>N: call create_draft(to, subject, body)
+    N->>W: run the tool
+    W->>W: writeChecks: field shapes, no line breaks in to/subject
+    alt a rule is broken
+        W-->>G: plain refusal naming the field, so the model can fix it
+    else valid
+        W->>DB: insert agent_actions (pending, expires in 1 day)
+        W-->>G: "Proposed, waiting for the user's approval"
+    end
+    G-->>N: call create_event(...), handled the same way
+    G-->>N: final answer
+    N->>DB: save messages, move conversation to top, insert agent_runs (in finally)
+    N-->>P: reply + pendingActions [draft, event]
+    P->>N: POST /assistant/actions/:id/approve (one card)
+    N->>DB: claim row: pending and not expired becomes running
+    N->>M: run the STORED arguments through the real tool (checked again)
+    M-->>N: result text, or a failure (isError)
+    N->>DB: status done or failed, short readable result
+```
+
+How the pieces fit:
+
+* **The MCP server is a tool boundary, not a service.** `src/google-mcp/server.ts` registers the Gmail, Calendar and Docs tools with their input schemas (the shapes come from `writeChecks.ts`, the same ones the proposal step uses). A fresh server per request holds that user's Google token in its closure, and the chat connects an MCP client to it over an in-memory transport. `mcpTools.ts` turns each MCP tool into a LangChain tool; a tool that answers with `isError` reaches the model as "The tool call failed: ...", so it can recover.
+* **Reads and writes take different paths.** A read (`list_events`, `search_emails`, `read_doc`) goes agent, `withTiming`, MCP tool, Google, and runs at once. A write goes agent, `withTiming`, `withApproval`, a pending row; the MCP tool is only reached when the user approves.
+* **Approval does not ask the model again.** The card is built from the stored arguments and approval runs those same arguments, so a change cannot differ from what the user read.
+* **Every turn leaves a record,** including a refused call, a timeout or a step-limit stop: `agent_runs` gets one row from a `finally`, with tool names, times and outcome, and no message text.
+* **Not built yet:** the Google write tools (draft, event, doc) are covered by the harness-tier evals but have not been run live end to end, and Google tokens are stored unencrypted.
+
 #### Agent evals
 
 The evals answer two different questions, so there are two tiers. Both play a scenario through the real chat service (the real agent, tools, approval gate and run record) on a **fake world**: one user's tasks, calendar and mailbox in memory, a fake Google that writes down anything that changes, a fake web search, and in-memory stores. A run cannot touch real data and every scenario starts from a known state. Every check is plain code over a trace of what happened (which tools were called, which changes were proposed, whether anything real was written, how the run ended, what the reply said); no model judges another model.
