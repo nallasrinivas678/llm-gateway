@@ -1,6 +1,6 @@
 // Google Calendar REST calls. Port of the working parts of the .NET CalendarConnector
 // (primary calendar only).
-import { googleRequest, type GoogleContext } from "./common.js";
+import { googleRequest, InvalidInputError, type GoogleContext } from "./common.js";
 
 export interface CalendarEvent {
   summary: string;
@@ -32,6 +32,10 @@ export async function listEvents(ctx: GoogleContext, maxResults: number, now: Da
   });
   const body = await googleRequest<{ items?: GoogleEvent[] }>("Calendar", ctx, `${ctx.settings.urls.calendarEvents}?${query}`);
   return (body.items ?? []).map(toCalendarEvent);
+}
+
+export function assertEventTimes(start: string, end: string): void {
+  if (Date.parse(end) <= Date.parse(start)) throw new InvalidInputError("The event must end after it starts.");
 }
 
 export async function createEvent(

@@ -1,10 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadSettings, type GoogleSettings } from "../config.js";
-import { createEvent, listEvents } from "./calendar.js";
+import { assertEventTimes, createEvent, listEvents } from "./calendar.js";
 import { GoogleApiError, InvalidInputError, type FetchFn, type GoogleContext, fetchWithTimeout } from "./common.js";
 import { appendToDoc, readDoc } from "./docs.js";
 import { createDraft, searchEmails } from "./gmail.js";
+import { writeShapes } from "./writeChecks.js";
 
 interface Deps {
   fetch?: FetchFn;
@@ -46,7 +47,8 @@ export function createGoogleMcpServer(googleToken: string, deps: Deps = {}): Mcp
     fetch: deps.fetch ?? fetchWithTimeout(settings.requestTimeoutSeconds),
     settings,
   };
-  const { calendar, gmail, docs } = settings.limits;
+  const { calendar, gmail } = settings.limits;
+  const writes = writeShapes(settings.limits);
   const server = new McpServer({ name: "google", version: "0.1.0" });
 
   server.registerTool(
@@ -62,16 +64,11 @@ export function createGoogleMcpServer(googleToken: string, deps: Deps = {}): Mcp
     "create_event",
     {
       description: "Create an event on the user's primary Google Calendar.",
-      inputSchema: {
-        summary: z.string().min(1).max(calendar.maxSummaryLength),
-        start: z.iso.datetime({ offset: true }).describe("ISO 8601 with offset, e.g. 2026-11-20T15:00:00-08:00"),
-        end: z.iso.datetime({ offset: true }).describe("ISO 8601 with offset"),
-        description: z.string().max(calendar.maxDescriptionLength).optional(),
-      },
+      inputSchema: writes.create_event,
     },
     (input) =>
       run(async () => {
-        if (Date.parse(input.end) <= Date.parse(input.start)) return failure("The event must end after it starts.");
+        assertEventTimes(input.start, input.end);
         return text(`Created: ${JSON.stringify(await createEvent(ctx, input))}`);
       }),
   );
@@ -92,11 +89,7 @@ export function createGoogleMcpServer(googleToken: string, deps: Deps = {}): Mcp
     "create_draft",
     {
       description: "Create a Gmail draft. It is NOT sent: the user reviews and sends it from Gmail.",
-      inputSchema: {
-        to: z.email(),
-        subject: z.string().min(1).max(gmail.maxSubjectLength),
-        body: z.string().min(1).max(gmail.maxBodyLength),
-      },
+      inputSchema: writes.create_draft,
     },
     (input) =>
       run(async () => {
@@ -118,7 +111,7 @@ export function createGoogleMcpServer(googleToken: string, deps: Deps = {}): Mcp
     "append_to_doc",
     {
       description: "Append text to the end of a Google Doc.",
-      inputSchema: { documentId: z.string().min(10).max(200), text: z.string().min(1).max(docs.maxAppendChars) },
+      inputSchema: writes.append_to_doc,
     },
     ({ documentId, text: toAppend }) =>
       run(async () => {

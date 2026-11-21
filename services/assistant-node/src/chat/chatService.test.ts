@@ -9,6 +9,7 @@ import { createChatService, titleFrom, toViewMessages, TOO_MANY_STEPS_REPLY } fr
 import { ConversationNotFoundError, type ConversationStore } from "./conversationStore.js";
 import { rowToMessage, type StoredMessage } from "./messageMapper.js";
 import type { ActionStore, AgentAction, PendingAction } from "./actionStore.js";
+import type { RunRecord, RunStore } from "./runRecord.js";
 import { ActionNotFoundError, ActionNotPendingError } from "./approval.js";
 import type { TaskStore } from "./taskTools.js";
 import type { WebSearchFn } from "./webSearch.js";
@@ -101,6 +102,7 @@ function setup(
     webSearch?: WebSearchFn;
     openTasks?: (userId: string, jwt: string) => TaskStore;
     openActions?: (userId: string, jwt: string) => ActionStore;
+    openRuns?: (userId: string, jwt: string) => RunStore;
   } = {},
 ) {
   const memory = memoryStore();
@@ -114,6 +116,7 @@ function setup(
     webSearch: options.webSearch,
     openTasks: options.openTasks,
     openActions: options.openActions,
+    openRuns: options.openRuns,
     now: () => new Date("2026-11-17T12:00:00Z"),
   });
   return { service, memory, google, chatModel };
@@ -558,6 +561,20 @@ describe("approval of changes", () => {
     expect(await refused.service.approve("user-1", "jwt", proposal.pendingActions[0]!.id)).toMatchObject({ status: "failed" });
   });
 
+  it("refuses a Google change that could never work, so no card is shown for it", async () => {
+    const actions = memoryActions();
+    const bad = { summary: "Dentist", start: "2026-11-24T10:00:00-08:00", end: "2026-11-24T09:00:00-08:00" };
+    const good = { summary: "Dentist", start: "2026-11-24T09:00:00-08:00", end: "2026-11-24T10:00:00-08:00" };
+    const { service, memory } = setup(model(toolCall("create_event", bad, "c1"), toolCall("create_event", good, "c2"), new AIMessage("ok")), { openActions: () => actions.store });
+
+    const result = await service.chat(input);
+
+    expect(result.pendingActions.map((a) => a.preview)).toEqual(["Add the calendar event \"Dentist\" from 2026-11-24T09:00:00-08:00 to 2026-11-24T10:00:00-08:00"]);
+    expect(actions.rows.size).toBe(1);
+    const toolTexts = memory.rows.get("conv-1")!.filter((m) => m.role === "tool").map((m) => m.content);
+    expect(toolTexts[0]).toContain("Nothing was proposed because the input is not valid (The event must end after it starts.)");
+  });
+
   it("shows pending cards again when the conversation is reopened, but not decided ones", async () => {
     const actions = memoryActions();
     const { service } = setup(model(toolCall("create_task", { title: "A", dueDate: "2026-11-24" }, "c1"), toolCall("create_task", { title: "B", dueDate: "2026-11-24" }, "c2"), new AIMessage("ok")), {
@@ -568,5 +585,136 @@ describe("approval of changes", () => {
     await service.reject("user-1", "jwt", pendingActions[0]!.id);
 
     expect((await service.get("user-1", "jwt", conversationId)).pendingActions.map((a) => a.id)).toEqual([pendingActions[1]!.id]);
+  });
+});
+
+describe("run record", () => {
+  function memoryRuns(failWith?: Error) {
+    const runs: RunRecord[] = [];
+    const opened: string[][] = [];
+    const openRuns = (userId: string, jwt: string): RunStore => {
+      opened.push([userId, jwt]);
+      return {
+        async record(run) {
+          if (failWith) throw failWith;
+          runs.push(run);
+        },
+      };
+    };
+    return { runs, opened, openRuns };
+  }
+
+  it("records a plain turn: timing, model, one step, no tools", async () => {
+    const { runs, opened, openRuns } = memoryRuns();
+    const { service } = setup(model(new AIMessage("Hello!")), { openRuns });
+
+    await service.chat(input);
+
+    expect(opened).toEqual([["user-1", "jwt"]]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      conversationId: "conv-1",
+      startedAt: "2026-11-17T12:00:00.000Z",
+      model: settings.chat.model,
+      steps: 1,
+      toolCalls: [],
+      outcome: "ok",
+      actionsProposed: 0,
+    });
+    expect(runs[0]!.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("records each tool with its name, time and success, and counts the model steps", async () => {
+    const { runs, openRuns } = memoryRuns();
+    const google = fakeGoogle(200, { items: [] });
+    const { service } = setup(model(toolCall("list_events", { maxResults: 3 }), new AIMessage("Nothing on.")), { google, openRuns });
+
+    await service.chat(input);
+
+    expect(runs[0]!.steps).toBe(2); // one call that asked for the tool, one that answered
+    expect(runs[0]!.toolCalls).toEqual([{ name: "list_events", ms: expect.any(Number), ok: true }]);
+  });
+
+  it("records a tool that failed as not ok, with a code and without Google's words", async () => {
+    const { runs, openRuns } = memoryRuns();
+    const { service } = setup(model(toolCall("list_events", {}), new AIMessage("I couldn't.")), { google: fakeGoogle(500, { error: "secret-detail" }), openRuns });
+
+    await service.chat(input);
+
+    expect(runs[0]!.toolCalls).toEqual([{ name: "list_events", ms: expect.any(Number), ok: false, code: "failed" }]);
+    expect(runs[0]!.outcome).toBe("ok"); // the run itself still finished
+    expect(JSON.stringify(runs[0])).not.toContain("secret-detail");
+  });
+
+  it("counts the changes proposed in the turn", async () => {
+    const { runs, openRuns } = memoryRuns();
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_task", { title: "A", dueDate: "2026-11-24" }, "c1"), toolCall("create_task", { title: "B", dueDate: "2026-11-24" }, "c2"), new AIMessage("ok")), {
+      openTasks: () => fakeTasks().store,
+      openActions: () => actions.store,
+      openRuns,
+    });
+
+    await service.chat(input);
+
+    expect(runs[0]!.actionsProposed).toBe(2);
+    expect(runs[0]!.toolCalls.map((c) => [c.name, c.ok])).toEqual([["create_task", true], ["create_task", true]]);
+  });
+
+  it("records the step limit as its own outcome, not an error", async () => {
+    const { runs, openRuns } = memoryRuns();
+    const endless = Array.from({ length: 40 }, (_, i) => toolCall("list_events", {}, `call-${i}`));
+    const { service } = setup(model(...endless), { maxToolRounds: 2, openRuns });
+
+    await service.chat(input);
+
+    expect(runs[0]).toMatchObject({ outcome: "step_limit", steps: 3 });
+  });
+
+  it("records a run that hit the time limit, and still throws", async () => {
+    class SlowModel extends RecordingModel {
+      async _generate(messages: BaseMessage[]): Promise<ChatResult> {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return super._generate(messages);
+      }
+    }
+    const { runs, openRuns } = memoryRuns();
+    const { service } = setup(new SlowModel([new AIMessage("too late")]), { chat: { runTimeoutSeconds: 0.05 }, openRuns });
+
+    await expect(service.chat(input)).rejects.toMatchObject({ name: expect.stringMatching(/TimeoutError|AbortError/) });
+    expect(runs[0]).toMatchObject({ outcome: "timeout", conversationId: "conv-1" });
+  });
+
+  it("records a run that failed inside, and still throws", async () => {
+    const { runs, openRuns } = memoryRuns();
+    const { service, memory } = setup(model(new AIMessage("x")), { openRuns });
+    memory.store.appendMessages = async () => {
+      throw new Error("database down");
+    };
+
+    await expect(service.chat(input)).rejects.toThrow("database down");
+    expect(runs[0]).toMatchObject({ outcome: "error" });
+  });
+
+  it("holds no message text, tool arguments or tool answers", async () => {
+    const { runs, openRuns } = memoryRuns();
+    const google = fakeGoogle(200, { items: [{ summary: "Secret meeting", start: { dateTime: "2026-11-18T09:00:00Z" }, end: { dateTime: "2026-11-18T09:15:00Z" } }] });
+    const { service } = setup(model(toolCall("list_events", { maxResults: 3 }), new AIMessage("You have a Secret meeting.")), { google, openRuns });
+
+    await service.chat({ ...input, message: "What is my private question?" });
+
+    const saved = JSON.stringify(runs[0]);
+    for (const text of ["private question", "Secret meeting", "maxResults"]) expect(saved).not.toContain(text);
+  });
+
+  it("answers normally when the record cannot be saved", async () => {
+    const { openRuns } = memoryRuns(new Error("relation secret_table does not exist"));
+    const { service } = setup(model(new AIMessage("Hello!")), { openRuns });
+    expect((await service.chat(input)).reply).toBe("Hello!");
+  });
+
+  it("records nothing when no run store is given", async () => {
+    const { service } = setup(model(new AIMessage("Hello!")));
+    expect((await service.chat(input)).reply).toBe("Hello!");
   });
 });

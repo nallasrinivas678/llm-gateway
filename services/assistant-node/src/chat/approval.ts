@@ -7,7 +7,7 @@ import type { PendingAction } from "./actionStore.js";
 // Every tool that changes something. Email stays draft-only, so create_draft is the only mail tool.
 export const WRITE_TOOLS = new Set(["create_task", "complete_task", "create_event", "create_draft", "append_to_doc"]);
 
-const FAILURE_PREFIXES = ["The tool call failed", "The task tool failed", "No task with that id"];
+const FAILURE_PREFIXES = ["The tool call failed", "The task tool failed", "The web search failed", "No task with that id"];
 
 // The tools answer in text (so the model can read it), so a failure is told from its wording.
 export const isFailureText = (text: string): boolean => FAILURE_PREFIXES.some((prefix) => text.startsWith(prefix));
