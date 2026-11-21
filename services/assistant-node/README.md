@@ -181,7 +181,7 @@ What happens on each request:
 
 Limits: 10 messages per user per minute (`chat.requestsPerMinute`), a whole run must finish within 60 seconds (`chat.runTimeoutSeconds`) and each tool call within 20 seconds (`chat.toolTimeoutSeconds`). A tool that times out is reported to the model as a failed call, so it can tell the user.
 
-Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), `504` the run took too long.
+Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), or the AI model's usage limit is reached ("The AI model's usage limit is reached. Try again later.", the same words resume match uses; the log records only the error name and status), `504` the run took too long.
 
 ### Approving changes
 
