@@ -36,6 +36,7 @@ function fakeStore() {
     }),
     getMatch: vi.fn(),
     listMatches: vi.fn(async () => []),
+    deleteMatch: vi.fn(async () => {}),
     addVersion: vi.fn(async () => {}),
   };
   return { store, saved };
@@ -156,8 +157,10 @@ describe("resume match service", () => {
     const service = createMatchService({ generate: scripted().generate, settings, openStore });
     await service.list("u1", "jwt");
     await service.get("u1", "jwt", "m1");
+    await service.remove("u1", "jwt", "m1");
     expect(store.listMatches).toHaveBeenCalled();
     expect(store.getMatch).toHaveBeenCalledWith("m1");
+    expect(store.deleteMatch).toHaveBeenCalledWith("m1");
     expect(openStore).toHaveBeenCalledWith("u1", "jwt");
   });
 });

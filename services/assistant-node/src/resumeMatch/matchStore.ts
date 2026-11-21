@@ -59,6 +59,9 @@ export interface MatchStore {
   createMatch(match: NewMatch, first: NewVersion): Promise<string>;
   getMatch(matchId: string): Promise<StoredMatch>;
   listMatches(): Promise<MatchSummary[]>;
+  // Deletes the match and, with it, every version (the foreign key cascades). Throws MatchNotFoundError
+  // when there is no such match, or it is someone else's (row-level security hides it).
+  deleteMatch(matchId: string): Promise<void>;
   // Throws VersionConflictError when that version number is already taken.
   addVersion(matchId: string, version: NewVersion): Promise<void>;
 }
@@ -145,6 +148,13 @@ export function createSupabaseMatchStore(client: SupabaseClient, userId: string)
         createdAt: data.created_at as string,
         versions,
       };
+    },
+
+    async deleteMatch(matchId) {
+      // Asking for the deleted ids tells a missing match from a deleted one.
+      const { data, error } = await client.from("resume_matches").delete().eq("id", matchId).select("id");
+      if (error) throw failed("delete the match", error);
+      if (!data || data.length === 0) throw new MatchNotFoundError();
     },
 
     async listMatches() {

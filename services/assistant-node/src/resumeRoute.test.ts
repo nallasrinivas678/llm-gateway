@@ -38,6 +38,7 @@ function fakeService(overrides: Partial<MatchService> = {}) {
     get: vi.fn(async () => ({ id: matchId, title: "Job", jobUrl: null, jobText: "j", requirements: view.requirements, targetScore: 90, createdAt: "t", versions: [{ version: 1, resumeText: "r", score: 100, results: view.results, confirmed: [], createdAt: "t" }] })),
     rewrite: vi.fn(async () => proposal),
     accept: vi.fn(async () => view),
+    remove: vi.fn(async () => {}),
     ...overrides,
   } as unknown as MatchService;
 }
@@ -248,6 +249,43 @@ describe("POST /resume/matches/:id/rewrite and /versions", () => {
     const limit = config.settings.resumeMatch.requestsPerMinute;
     for (let i = 0; i < limit; i++) expect((await rewrite(app, { confirmed })).status).toBe(200);
     expect((await save(app, accepted)).status).toBe(429);
+  });
+});
+
+describe("DELETE /resume/matches/:id", () => {
+  const del = (app: ReturnType<typeof createApp>, id = matchId, withToken = true) => call(app, `/resume/matches/${id}`, { method: "DELETE" }, withToken);
+
+  it("requires a login token", async () => {
+    expect((await del(createApp(config, { resumeMatch: fakeService() }), matchId, false)).status).toBe(401);
+  });
+
+  it("deletes the match as the caller and answers 204", async () => {
+    const service = fakeService();
+    const res = await del(createApp(config, { resumeMatch: service }));
+    expect(res.status).toBe(204);
+    expect(service.remove).toHaveBeenCalledWith(userId, expect.stringMatching(/^[\w-]+\.[\w-]+\.[\w-]+$/), matchId);
+  });
+
+  it("answers 404 for an unknown or foreign match, and for a malformed id without touching the service", async () => {
+    const service = fakeService({ remove: vi.fn(async () => Promise.reject(new MatchNotFoundError())) });
+    const app = createApp(config, { resumeMatch: service });
+    expect((await del(app)).status).toBe(404);
+    const untouched = fakeService();
+    expect((await del(createApp(config, { resumeMatch: untouched }), "not-a-uuid")).status).toBe(404);
+    expect(untouched.remove).not.toHaveBeenCalled();
+  });
+
+  it("hides a failure behind a 502 without its message", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = fakeService({ remove: vi.fn(async () => Promise.reject(new Error("secret internals"))) });
+    const res = await del(createApp(config, { resumeMatch: service }));
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(await res.json())).not.toContain("secret");
+    error.mockRestore();
+  });
+
+  it("answers 503 when the service is not configured", async () => {
+    expect((await del(createApp(config, {}))).status).toBe(503);
   });
 });
 

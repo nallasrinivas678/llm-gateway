@@ -121,6 +121,24 @@ describe("Supabase match store", () => {
     ]);
   });
 
+  it("deletes a match by id as the caller", async () => {
+    const { client, calls } = fakeSupabase(() => ok([{ id: "m1" }]));
+    await createSupabaseMatchStore(client, "u1").deleteMatch("m1");
+    expect(calls[0]).toMatchObject({ table: "resume_matches", op: "delete", filters: { id: "m1" } });
+  });
+
+  it("says not found when nothing was deleted (missing, or another user's)", async () => {
+    const { client } = fakeSupabase(() => ok([]));
+    await expect(createSupabaseMatchStore(client, "u1").deleteMatch("m1")).rejects.toBeInstanceOf(MatchNotFoundError);
+    const none = fakeSupabase(() => ok(null));
+    await expect(createSupabaseMatchStore(none.client, "u1").deleteMatch("m1")).rejects.toBeInstanceOf(MatchNotFoundError);
+  });
+
+  it("reports a delete failure with its code", async () => {
+    const { client } = fakeSupabase(() => ({ data: null, error: { code: "42501" } }));
+    await expect(createSupabaseMatchStore(client, "u1").deleteMatch("m1")).rejects.toThrow("Could not delete the match (42501)");
+  });
+
   it("reports read failures with their code", async () => {
     const { client } = fakeSupabase(() => ({ data: null, error: { code: "PGRST301" } }));
     const store = createSupabaseMatchStore(client, "u1");
