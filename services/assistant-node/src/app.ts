@@ -9,7 +9,7 @@ import type { Config } from "./config.js";
 import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
 import { GoogleConnectError, InvalidStateError } from "./google-oauth/connectService.js";
 import { createDocRoutes } from "./docQa/routes.js";
-import { createRateLimiter } from "./resumeMatch/generate.js";
+import { createRateLimiter, isQuotaError } from "./resumeMatch/generate.js";
 import { createResumeRoutes } from "./resumeMatch/routes.js";
 import type { Services } from "./wiring.js";
 import { logError } from "./log.js";
@@ -54,6 +54,11 @@ export function createApp(config: Config, services: Services = {}) {
       return c.json(result);
     } catch (error) {
       if (error instanceof ConversationNotFoundError) return c.json({ error: "Conversation not found." }, 404);
+      // The model said it has no quota left (a 429): not a fault in the request, and waiting fixes it.
+      if (isQuotaError(error)) {
+        logError("chat hit the model's usage limit", error);
+        return c.json({ error: "The AI model's usage limit is reached. Try again later." }, 503);
+      }
       if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return c.json({ error: "The assistant took too long. Try again." }, 504);
       // Log what failed, never what the user said.
       logError("chat failed", error);

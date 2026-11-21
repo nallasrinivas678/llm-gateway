@@ -93,6 +93,23 @@ describe("POST /assistant/chat", () => {
     expect(JSON.stringify(await response.json())).not.toContain("hunter2");
   });
 
+  it("says plainly that the model's usage limit is reached (503), without the model's own text", async () => {
+    const { chat } = fakeChat(async () => {
+      throw Object.assign(new Error("Quota exceeded for project secret-project-123"), { name: "RateLimitQuotaExhaustedError", status: 429 });
+    });
+    const response = await post(createApp(config, { chat }), { message: "hi" });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "The AI model's usage limit is reached. Try again later." });
+  });
+
+  it("does not take a failure with some other status for a usage limit", async () => {
+    const { chat } = fakeChat(async () => {
+      throw Object.assign(new Error("bad gateway"), { status: 502 });
+    });
+    expect((await post(createApp(config, { chat }), { message: "hi" })).status).toBe(502);
+  });
+
   it("answers 504 when the assistant takes too long", async () => {
     const { chat } = fakeChat(async () => {
       throw Object.assign(new Error("The operation timed out"), { name: "TimeoutError" });
