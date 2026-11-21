@@ -29,7 +29,7 @@ The alternative — scoping the cache per caller — would mean two services ask
 
 ## Assistant service on Node (`services/assistant-node`)
 
-> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything is built; the run record and the agent evals are planned (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
+> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything and the run record are built; the agent evals are planned (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
 
 ### Why move it
 
@@ -71,7 +71,9 @@ All lines exist today for chat. The daily summary reads Google and calls Gemini 
 | Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt, task tools, web search | `src/chat/` | built, tested; checked live with Gemini, Google and a real sign-in |
 | Chat endpoints (`POST /assistant/chat`, saved conversations list, read and delete) and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
 | Approval of writes: proposals saved in `agent_actions`, approve and reject endpoints | `src/chat/approval.ts`, `src/chat/actionStore.ts` | built, tested; not tried live yet |
-| Run record, agent evals | `AGENT_HARNESS_PLAN.md` | planned |
+| Run record: one `agent_runs` row per chat turn (time, steps, tools, outcome; no text) | `src/chat/runRecord.ts` | built, tested; not tried live yet |
+| Checks on Google write calls before they are proposed | `src/google-mcp/writeChecks.ts` | built, tested |
+| Agent evals | `AGENT_HARNESS_PLAN.md` | planned |
 | Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
 | PDF Q&A | `src/docQa/` | built, tested |
 
@@ -146,8 +148,27 @@ sequenceDiagram
 | Email is draft-only; nothing in the service can send mail | built |
 | Logs: one JSON line per event with the error's type, status and code, never message text | built |
 | **Approval before any write.** A write tool (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) saves a pending row in `agent_actions` instead of running; the page shows a card with Approve and Reject; approval runs the stored, checked arguments, not a second model call. Every write is approved at first. | built (see below) |
-| **Run record.** One `agent_runs` row per turn: time taken, steps, tool names with time and outcome, how it ended. No message text and no arguments. | planned (A3) |
+| **Run record.** One `agent_runs` row per turn: time taken, model steps, each tool's name, time and success, how it ended (`ok`, `step_limit`, `timeout`, `error`) and how many changes it proposed. No message text, arguments or answers. A failure to save it is logged and never changes the reply. | built (see below) |
 | **Agent evals.** About 25 scenarios on a fake backend, scored in code: no write without approval, injected instructions in an email lead to no write, two tasks with the same name make the agent ask, and so on. Run on demand, not in CI. | planned (A4) |
+
+#### What a run record holds
+
+`agent_runs` is written as the user (row-level security) once per turn, after the answer is ready, and read back with SQL. It exists to answer questions that the saved messages cannot:
+
+* **How slow is it?** `duration_ms` per run, and `ms` per tool call.
+* **Which tool fails?** Each tool call has `ok`, and a `code` when it failed: `timeout`, `failed` (the tool answered with a failure) or `error` (it threw).
+* **How often does it hit the limits?** `outcome` is `ok`, `step_limit` (the 5-round limit; the user got the polite reply), `timeout` (the 60 s limit) or `error`.
+* **Do people approve?** `actions_proposed` per run, to compare with how many cards end `done`, `rejected` or expired in `agent_actions`.
+
+A tool call is timed outside the approval wrapper, so a proposal counts as a successful call of the write tool (nothing was changed yet). Rows cannot be changed once written; they go with the user's account. Example, the slowest tools in the last week:
+
+```sql
+select tool->>'name' as tool, count(*) as calls, round(avg((tool->>'ms')::int)) as avg_ms,
+       count(*) filter (where not (tool->>'ok')::boolean) as failed
+from agent_runs, jsonb_array_elements(tool_calls) as tool
+where started_at > now() - interval '7 days'
+group by 1 order by avg_ms desc;
+```
 
 #### Approving a change
 
@@ -177,6 +198,7 @@ sequenceDiagram
 * **Which tools:** `create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`. Reading tools (`list_events`, `search_emails`, `read_doc`, `list_tasks`, `web_search`) run straight away. Email stays draft-only.
 * **No double run:** approving claims the row with one conditional update (`status = 'pending'` and not expired), so a double click or two tabs run it once; the second gets 409.
 * **Expiry:** a proposal can be approved for one day; after that the answer is "This change expired. Ask the assistant again."
+* **A call that could never work is never proposed.** Before a card is saved, the same checks the Google tool server applies when it runs are applied to the arguments (field types and lengths, the event ending after it starts, no line breaks in a draft's address or subject, a real Google Doc id). The model is told what was wrong, by field name and never by value, so it can fix the call or ask the user. They live in one place, `src/google-mcp/writeChecks.ts`, used by both the server and the chat.
 * **A stale proposal fails clearly:** the tool checks its arguments again at approval time, so a task deleted since the proposal ends as `failed` with "No task with that id was found.", not as `done`. A complete-task proposal for a task that does not exist is refused when proposed.
 * **Failures are plain:** a failed change records a short readable result, never Google's or the database's own text.
 * **Cards survive a refresh:** the conversation's pending proposals come back with `GET /assistant/conversations/:id`.

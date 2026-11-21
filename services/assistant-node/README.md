@@ -194,6 +194,12 @@ The tools that change something (`create_task`, `complete_task`, `create_event`,
 
 Approving takes the proposal with one conditional update (pending and not expired), so a double click runs it once. The tool checks its arguments again when it runs, so a task that has gone since the proposal ends as `failed`, not `done`.
 
+A call to a Google write tool that could never work (an event that ends before it starts, an address with line breaks, a bad document id, a field that is missing or too long) is refused before it is proposed, with the field named and never its value, so no card is shown for it. The checks are the same ones the tool server applies when it runs (`src/google-mcp/writeChecks.ts`).
+
+### Run record
+
+Each chat turn writes one row to `agent_runs` as the user: duration, model, number of model steps, each tool's name, time and success (with a code when it failed: `timeout`, `failed` or `error`), how it ended (`ok`, `step_limit`, `timeout` or `error`) and how many changes it proposed. It holds no message text, tool arguments or tool answers. Failing to save it is logged and never changes the reply. There is no endpoint for it yet; read it with SQL (see ARCHITECTURE.md for an example).
+
 ### Saved conversations
 
 For the chat page's list (Node service only; the .NET service has none). All three need the login token and read or delete as the user, so another user's conversation, a missing one and a malformed id all give `404`.

@@ -6,6 +6,7 @@ import { GraphRecursionError } from "@langchain/langgraph";
 import { createAgent } from "langchain";
 import type { Settings } from "../config.js";
 import { createGoogleMcpServer } from "../google-mcp/server.js";
+import { writeProblem } from "../google-mcp/writeChecks.js";
 import type { FetchFn } from "../google-mcp/common.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 import { logError } from "../log.js";
@@ -15,6 +16,7 @@ import type { ConversationStore } from "./conversationStore.js";
 import { messageToStored, messagesToStored, type StoredMessage } from "./messageMapper.js";
 import { trimHistory } from "./history.js";
 import { loadMcpTools } from "./mcpTools.js";
+import { outcomeOf, withTiming, type RecordedToolCall, type RunOutcome, type RunStore } from "./runRecord.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { taskTools, type TaskStore } from "./taskTools.js";
 import { webSearchTool, type WebSearchFn } from "./webSearch.js";
@@ -35,6 +37,8 @@ export interface ChatDeps {
   openTasks?: (userId: string, jwt: string) => TaskStore;
   // When given, a tool that changes something only proposes the change; the user approves it.
   openActions?: (userId: string, jwt: string) => ActionStore;
+  // When given, each turn leaves a record of its timing and outcome (no message text).
+  openRuns?: (userId: string, jwt: string) => RunStore;
   now?: () => Date;
 }
 
@@ -161,17 +165,29 @@ export function createChatService(deps: ChatDeps) {
         if (!(error instanceof GoogleReconnectRequired)) throw error;
       }
 
+      // What the run record keeps: timing and outcome only, never message text or tool arguments.
+      const runs = deps.openRuns?.(input.userId, input.jwt);
+      const runStarted = performance.now();
+      const startedAt = now().toISOString();
+      const toolCalls: RecordedToolCall[] = [];
+      const pendingActions: PendingAction[] = [];
+      let outcome: RunOutcome = "ok";
+      let steps = 0;
+
       try {
         const tasks = deps.openTasks?.(input.userId, input.jwt);
         const actions = deps.openActions?.(input.userId, input.jwt);
-        const pendingActions: PendingAction[] = [];
         const allTools = [...(google?.tools ?? []), ...(deps.webSearch ? [webSearchTool(deps.webSearch)] : []), ...(tasks ? taskTools(tasks) : [])];
         const agent = createAgent({
           model: deps.model,
           // With approval on, a tool that changes something saves a proposal instead of running.
-          tools: actions
+          tools: withTiming(
+            actions
             ? withApproval(allTools, {
                 describe: async (tool, args) => {
+                  // A call that could never work is refused now, so a card is never shown for it.
+                  const problem = writeProblem(tool, args, deps.settings.google);
+                  if (problem) return { refusal: `Nothing was proposed because the input is not valid (${problem}). Correct it, or ask the user.` };
                   if (tool !== "complete_task") return { preview: previewFor(tool, args) };
                   const task = tasks ? await tasks.get(String(args.taskId)) : null;
                   return task ? { preview: previewFor(tool, args, task.title) } : { refusal: "No task with that id was found." };
@@ -180,6 +196,8 @@ export function createChatService(deps: ChatDeps) {
                 onProposed: (action) => pendingActions.push(action),
               })
             : allTools,
+            toolCalls,
+          ),
           systemPrompt: buildSystemPrompt({
             today: now().toISOString().slice(0, 10),
             googleConnected: google !== null,
@@ -198,10 +216,13 @@ export function createChatService(deps: ChatDeps) {
             { recursionLimit: deps.settings.chat.maxToolRounds * 2 + 1, signal: AbortSignal.timeout(deps.settings.chat.runTimeoutSeconds * 1000) },
           );
           produced = (result.messages as BaseMessage[]).slice(history.length);
+          steps = produced.filter((m) => m instanceof AIMessage).length;
         } catch (error) {
           if (!(error instanceof GraphRecursionError)) throw error;
           // Keep the question and the apology; the half-finished tool calls are dropped.
           produced = [userMessage, new AIMessage(TOO_MANY_STEPS_REPLY)];
+          outcome = "step_limit";
+          steps = deps.settings.chat.maxToolRounds + 1;
         }
 
         const stored = messagesToStored(produced);
@@ -211,7 +232,28 @@ export function createChatService(deps: ChatDeps) {
         const reply = (last ? messageToStored(last)?.content : "")?.trim() || EMPTY_REPLY;
         const toolCallsExecuted = [...new Set(stored.flatMap((m) => m.toolCalls?.map((c) => c.ToolName) ?? []))];
         return { conversationId, reply, toolCallsExecuted, pendingActions };
+      } catch (error) {
+        // A time limit or any other failure; the step limit is handled above and is not an error.
+        if (outcome === "ok") outcome = outcomeOf(error);
+        throw error;
       } finally {
+        // Recording must never break or slow the answer: a failure here is only logged.
+        if (runs) {
+          try {
+            await runs.record({
+              conversationId,
+              startedAt,
+              durationMs: performance.now() - runStarted,
+              model: deps.settings.chat.model,
+              steps,
+              toolCalls,
+              outcome,
+              actionsProposed: pendingActions.length,
+            });
+          } catch (error) {
+            logError("recording a run failed", error);
+          }
+        }
         await google?.close();
       }
     },

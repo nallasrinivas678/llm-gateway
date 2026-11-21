@@ -36,10 +36,14 @@ const toBase64Url = (value: Buffer | string) => Buffer.from(value).toString("bas
 
 // Builds a plain-text RFC 2822 message. Line breaks in the address or subject would let a
 // caller inject extra headers (for example a hidden Bcc), so they are rejected.
-export function buildRawMessage(input: { to: string; subject: string; body: string }): string {
-  for (const value of [input.to, input.subject]) {
+export function assertNoLineBreaks(...values: string[]): void {
+  for (const value of values) {
     if (/[\r\n]/.test(value)) throw new InvalidInputError("Line breaks are not allowed in the address or subject.");
   }
+}
+
+export function buildRawMessage(input: { to: string; subject: string; body: string }): string {
+  assertNoLineBreaks(input.to, input.subject);
   const subject = /^[\x20-\x7e]*$/.test(input.subject)
     ? input.subject
     : `=?UTF-8?B?${Buffer.from(input.subject, "utf8").toString("base64")}?=`;

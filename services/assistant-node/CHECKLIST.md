@@ -63,7 +63,9 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Web search (Gemini Google Search grounding): `web_search` chat tool, checked once against the real API
 - [x] Approval flow for tools that change things (A2, branches `srnalla-approval`): the five write tools (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) save a proposal in `agent_actions` instead of running; `POST /assistant/actions/:id/approve` and `/reject`; cards with Approve and Reject in the chat page; a proposal expires after a day; approving claims it with one conditional update so it cannot run twice. Unit tested; not tried live yet
 - [ ] Live check of approval with a real sign-in: ask for a task, see the card, reject one, approve one and see it in the Tasks page; then the same for an email draft (the only Google write checked end to end, since a draft is never sent)
-- [ ] Run record (A3): `agent_runs` table, one row per turn with no message text
+- [x] Run record (A3, branch `srnalla-run-record`): one `agent_runs` row per chat turn: duration, model, model steps, each tool's name, time and success (with a code when it failed), outcome (`ok`, `step_limit`, `timeout`, `error`) and changes proposed. No message text, tool arguments or answers. A failure to save it is only logged. Unit tested; not tried live yet
+- [x] A call to a Google write tool that could never work (event ending before it starts, bad address, line breaks, bad doc id) is refused when proposed, so no card is shown for it; the checks are shared with the tool server (`src/google-mcp/writeChecks.ts`)
+- [ ] Live check of the run record: after one chat turn, one row appears in `agent_runs` for the signed-in user, and another user cannot read it
 - [ ] Agent evals (A4): about 25 scenarios on a fake backend
 
 ## 5. Daily summary (dev)
