@@ -20,10 +20,13 @@ export async function loadMcpTools(client: Client, options: { toolTimeoutMs?: nu
         func: async (args: unknown) => {
           try {
             const result = await client.callTool({ name: tool.name, arguments: args as Record<string, unknown> }, undefined, { timeout: options.toolTimeoutMs });
-            return ((result.content ?? []) as ContentBlock[])
+            const text = ((result.content ?? []) as ContentBlock[])
               .filter((block) => block.type === "text")
               .map((block) => block.text ?? "")
               .join("\n");
+            // The server marks a refused or failed call; say so in the text, which is all the model
+            // (and the approval step, which must tell done from failed) reads.
+            return result.isError ? `The tool call failed: ${text}` : text;
           } catch (error) {
             // Input that fails the tool's own checks; the message names the field, not any secret.
             return `The tool call failed: ${error instanceof Error ? error.message : "unknown error"}`;

@@ -25,6 +25,8 @@ export interface TaskSummary {
 export interface TaskStore {
   list(options: { from?: string; to?: string; includeDone: boolean; limit: number }): Promise<TaskSummary[]>;
   create(task: { title: string; dueDate: string; notes?: string; priority: Priority }): Promise<{ id: string }>;
+  // One task by id, or null when there is none (or it is someone else's).
+  get(taskId: string): Promise<{ title: string; dueDate: string } | null>;
   // Marks one occurrence done (the task's own date unless one is given). Null when no such task.
   complete(taskId: string, occurrenceDate?: string): Promise<{ title: string; occurrenceDate: string } | null>;
 }
@@ -92,6 +94,12 @@ export function createSupabaseTaskStore(client: SupabaseClient, userId: string, 
         .single();
       if (error) throw fail("create the task", error.code);
       return { id: data.id as string };
+    },
+
+    async get(taskId) {
+      const { data, error } = await client.from("events").select("title, event_date").eq("id", taskId).eq("type", "task").maybeSingle();
+      if (error) throw fail("read the task", error.code);
+      return data ? { title: data.title as string, dueDate: data.event_date as string } : null;
     },
 
     async complete(taskId, occurrenceDate) {

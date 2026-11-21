@@ -105,6 +105,7 @@ function fakeStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     list: async () => [{ id: "t1", title: "Pay rent", dueDate: "2026-11-24", priority: "high", notes: null, repeats: null, done: false }],
     create: async () => ({ id: "new-id" }),
+    get: async () => ({ title: "Pay rent", dueDate: "2026-11-24" }),
     complete: async () => ({ title: "Pay rent", occurrenceDate: "2026-11-24" }),
     ...overrides,
   };

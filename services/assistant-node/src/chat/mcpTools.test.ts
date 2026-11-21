@@ -39,6 +39,11 @@ describe("MCP tools for the agent", () => {
     expect(calls).toEqual([{ name: "echo", arguments: { text: "hi" } }]);
   });
 
+  it("says in the text when the server marked the call as failed, so a refusal is not mistaken for success", async () => {
+    const [echo] = await loadMcpTools(fakeClient(async () => ({ isError: true, content: [{ type: "text", text: "Google Calendar request failed (status 403)." }] })));
+    expect(await echo!.invoke({ text: "hi" })).toBe("The tool call failed: Google Calendar request failed (status 403).");
+  });
+
   it("gives each tool call a timeout, and returns a timeout as text", async () => {
     const options: unknown[] = [];
     const client = {

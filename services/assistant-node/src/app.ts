@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { createAuth, type AuthEnv } from "./auth.js";
+import { ActionNotFoundError, ActionNotPendingError } from "./chat/approval.js";
 import { ConversationNotFoundError } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { SummaryUnavailableError } from "./dailySummary/dailySummaryService.js";
@@ -101,6 +102,28 @@ export function createApp(config: Config, services: Services = {}) {
       return conversationFailure(c, "conversation delete failed", error);
     }
   });
+
+  // Approve or reject a change the assistant proposed. Run as the user; someone else's action and a
+  // missing one both answer 404. Answers 409 when it is no longer pending (already decided, being
+  // run, or past its day), so a double click cannot run it twice.
+  const decide = (verb: "approve" | "reject") => async (c: Context<AuthEnv>) => {
+    if (!services.chat) return c.json({ error: "Chat is not configured on this server." }, 503);
+    const id = conversationId.safeParse(c.req.param("id"));
+    if (!id.success) return c.json({ error: "Action not found." }, 404);
+    try {
+      const chat = services.chat;
+      return c.json(await (verb === "approve" ? chat.approve : chat.reject)(c.get("userId"), c.get("jwt"), id.data));
+    } catch (error) {
+      if (error instanceof ActionNotFoundError) return c.json({ error: "Action not found." }, 404);
+      if (error instanceof ActionNotPendingError) {
+        return c.json({ error: error.status === "expired" ? "This change expired. Ask the assistant again." : `This change was already ${error.status}.` }, 409);
+      }
+      logError(`action ${verb} failed`, error);
+      return c.json({ error: "The change could not be completed." }, 502);
+    }
+  };
+  assistant.post("/actions/:id/approve", decide("approve"));
+  assistant.post("/actions/:id/reject", decide("reject"));
 
   // Daily summary: same JSON and SSE events as the .NET endpoints. Errors carry a `detail`.
   const summaryFailure = (error: unknown) => {

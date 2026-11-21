@@ -8,6 +8,8 @@ import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 import { createChatService, titleFrom, toViewMessages, TOO_MANY_STEPS_REPLY } from "./chatService.js";
 import { ConversationNotFoundError, type ConversationStore } from "./conversationStore.js";
 import { rowToMessage, type StoredMessage } from "./messageMapper.js";
+import type { ActionStore, AgentAction, PendingAction } from "./actionStore.js";
+import { ActionNotFoundError, ActionNotPendingError } from "./approval.js";
 import type { TaskStore } from "./taskTools.js";
 import type { WebSearchFn } from "./webSearch.js";
 
@@ -98,6 +100,7 @@ function setup(
     chat?: Partial<typeof settings.chat>;
     webSearch?: WebSearchFn;
     openTasks?: (userId: string, jwt: string) => TaskStore;
+    openActions?: (userId: string, jwt: string) => ActionStore;
   } = {},
 ) {
   const memory = memoryStore();
@@ -110,6 +113,7 @@ function setup(
     googleFetch: google.googleFetch,
     webSearch: options.webSearch,
     openTasks: options.openTasks,
+    openActions: options.openActions,
     now: () => new Date("2026-11-17T12:00:00Z"),
   });
   return { service, memory, google, chatModel };
@@ -125,7 +129,7 @@ describe("chat service", () => {
 
     const result = await service.chat({ ...input, message: "Hi" });
 
-    expect(result).toEqual({ conversationId: "conv-1", reply: "Hello there!", toolCallsExecuted: [] });
+    expect(result).toEqual({ conversationId: "conv-1", reply: "Hello there!", toolCallsExecuted: [], pendingActions: [] });
     expect(memory.rows.get("conv-1")?.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 
@@ -170,7 +174,7 @@ describe("chat service", () => {
     const created: unknown[] = [];
     const openTasks = (userId: string, jwt: string): TaskStore => {
       opened.push([userId, jwt]);
-      return { list: async () => [], create: async (task) => (created.push(task), { id: "t-1" }), complete: async () => null };
+      return { list: async () => [], create: async (task) => (created.push(task), { id: "t-1" }), get: async () => null, complete: async () => null };
     };
     const { service, chatModel } = setup(model(toolCall("create_task", { title: "Pay rent", dueDate: "2026-11-24" }), new AIMessage("Done.")), { openTasks });
 
@@ -362,5 +366,207 @@ describe("toViewMessages", () => {
       { role: "user", text: "Thanks", tools: [] },
       { role: "assistant", text: "Any time.", tools: [] },
     ]);
+  });
+});
+
+// An in-memory stand-in for the proposed-changes table, with the same rules the real one has.
+function memoryActions() {
+  const rows = new Map<string, AgentAction>();
+  const store: ActionStore = {
+    async propose(a) {
+      const id = `act-${rows.size + 1}`;
+      rows.set(id, { id, conversationId: a.conversationId, tool: a.tool, args: a.args, preview: a.preview, status: "pending", result: null, expiresAt: "2026-11-18T12:00:00Z" });
+      return { id, tool: a.tool, preview: a.preview };
+    },
+    async get(id) {
+      return rows.get(id) ?? null;
+    },
+    async claim(id) {
+      const row = rows.get(id);
+      if (!row || row.status !== "pending") return null;
+      row.status = "running";
+      return { ...row };
+    },
+    async finish(id, status, result) {
+      Object.assign(rows.get(id)!, { status, result });
+    },
+    async reject(id) {
+      const row = rows.get(id);
+      if (!row || row.status !== "pending") return false;
+      row.status = "rejected";
+      return true;
+    },
+    async listPending(conversationId) {
+      return [...rows.values()].filter((r) => r.conversationId === conversationId && r.status === "pending").map((r): PendingAction => ({ id: r.id, tool: r.tool, preview: r.preview }));
+    },
+  };
+  return { store, rows };
+}
+
+function fakeTasks(overrides: Partial<TaskStore> = {}) {
+  const created: unknown[] = [];
+  const completed: string[] = [];
+  const store: TaskStore = {
+    list: async () => [],
+    create: async (task) => (created.push(task), { id: "t-1" }),
+    get: async (id) => (id === "00000000-0000-4000-8000-000000000001" ? { title: "Pay rent", dueDate: "2026-11-24" } : null),
+    complete: async (id) => (completed.push(id), { title: "Pay rent", occurrenceDate: "2026-11-24" }),
+    ...overrides,
+  };
+  return { store, created, completed };
+}
+
+describe("approval of changes", () => {
+  const taskId = "00000000-0000-4000-8000-000000000001";
+
+  it("proposes a change instead of making it, and returns the card", async () => {
+    const tasks = fakeTasks();
+    const actions = memoryActions();
+    const { service, chatModel } = setup(model(toolCall("create_task", { title: "Pay rent", dueDate: "2026-11-24", priority: "high" }), new AIMessage("I proposed it.")), {
+      openTasks: () => tasks.store,
+      openActions: () => actions.store,
+    });
+
+    const result = await service.chat(input);
+
+    expect(tasks.created).toEqual([]); // nothing was written
+    expect(result.pendingActions).toEqual([{ id: "act-1", tool: "create_task", preview: 'Add the task "Pay rent" due 2026-11-24, high priority' }]);
+    expect(actions.rows.get("act-1")).toMatchObject({ status: "pending", conversationId: "conv-1", args: { title: "Pay rent", dueDate: "2026-11-24", priority: "high" } });
+    expect(systemPromptOf(chatModel)).toContain("approval");
+  });
+
+  it("runs reading tools straight away, with no card", async () => {
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("list_tasks", {}), new AIMessage("Nothing due.")), { openTasks: () => fakeTasks().store, openActions: () => actions.store });
+    const result = await service.chat(input);
+    expect(result.pendingActions).toEqual([]);
+    expect(actions.rows.size).toBe(0);
+  });
+
+  it("names the task on a complete card, and refuses to propose for a task that does not exist", async () => {
+    const actions = memoryActions();
+    const { service } = setup(
+      model(toolCall("complete_task", { taskId }, "c1"), toolCall("complete_task", { taskId: "00000000-0000-4000-8000-000000000002" }, "c2"), new AIMessage("ok")),
+      { openTasks: () => fakeTasks().store, openActions: () => actions.store },
+    );
+    const result = await service.chat(input);
+    expect(result.pendingActions.map((a) => a.preview)).toEqual(['Mark the task "Pay rent" done']);
+    expect(actions.rows.size).toBe(1);
+  });
+
+  it("tells the model plainly when the proposal could not be saved, without the database's words", async () => {
+    const actions = memoryActions();
+    actions.store.propose = async () => {
+      throw new Error("relation secret_table does not exist");
+    };
+    const { service, memory } = setup(model(toolCall("create_task", { title: "x", dueDate: "2026-11-24" }), new AIMessage("It failed.")), {
+      openTasks: () => fakeTasks().store,
+      openActions: () => actions.store,
+    });
+    await service.chat(input);
+    const toolText = memory.rows.get("conv-1")!.find((m) => m.role === "tool")!.content;
+    expect(toolText).toContain("could not be saved for approval");
+    expect(toolText).not.toContain("secret_table");
+  });
+
+  it("makes the change only when the user approves, using the stored arguments", async () => {
+    const tasks = fakeTasks();
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_task", { title: "Pay rent", dueDate: "2026-11-24" }), new AIMessage("Proposed.")), {
+      openTasks: () => tasks.store,
+      openActions: () => actions.store,
+    });
+    const { pendingActions } = await service.chat(input);
+
+    const outcome = await service.approve("user-1", "jwt", pendingActions[0]!.id);
+
+    expect(outcome).toEqual({ id: "act-1", status: "done", result: 'Created the task "Pay rent" due 2026-11-24 (id t-1).' });
+    expect(tasks.created).toEqual([{ title: "Pay rent", dueDate: "2026-11-24", notes: undefined, priority: "none" }]);
+    expect(actions.rows.get("act-1")).toMatchObject({ status: "done" });
+  });
+
+  it("will not run the same change twice, nor one that was rejected", async () => {
+    const tasks = fakeTasks();
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_task", { title: "A", dueDate: "2026-11-24" }, "c1"), toolCall("create_task", { title: "B", dueDate: "2026-11-24" }, "c2"), new AIMessage("ok")), {
+      openTasks: () => tasks.store,
+      openActions: () => actions.store,
+    });
+    const { pendingActions } = await service.chat(input);
+
+    await service.approve("user-1", "jwt", pendingActions[0]!.id);
+    await expect(service.approve("user-1", "jwt", pendingActions[0]!.id)).rejects.toMatchObject({ status: "done" });
+    expect(tasks.created).toHaveLength(1);
+
+    await service.reject("user-1", "jwt", pendingActions[1]!.id);
+    await expect(service.approve("user-1", "jwt", pendingActions[1]!.id)).rejects.toBeInstanceOf(ActionNotPendingError);
+    await expect(service.reject("user-1", "jwt", pendingActions[1]!.id)).rejects.toMatchObject({ status: "rejected" });
+    expect(tasks.created).toHaveLength(1);
+  });
+
+  it("says 'expired' for a pending change the store will not hand out any more", async () => {
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_task", { title: "A", dueDate: "2026-11-24" }), new AIMessage("ok")), { openTasks: () => fakeTasks().store, openActions: () => actions.store });
+    const { pendingActions } = await service.chat(input);
+    actions.store.claim = async () => null; // past its day
+    await expect(service.approve("user-1", "jwt", pendingActions[0]!.id)).rejects.toMatchObject({ status: "expired" });
+  });
+
+  it("says 'not found' for an action that is not the caller's or does not exist", async () => {
+    const { service } = setup(model(new AIMessage("x")), { openActions: () => memoryActions().store });
+    await expect(service.approve("user-1", "jwt", "nope")).rejects.toBeInstanceOf(ActionNotFoundError);
+    await expect(service.reject("user-1", "jwt", "nope")).rejects.toBeInstanceOf(ActionNotFoundError);
+  });
+
+  it("records a failed outcome when the change itself fails, with a plain message", async () => {
+    const tasks = fakeTasks({ create: async () => Promise.reject(new Error("secret detail")) });
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_task", { title: "A", dueDate: "2026-11-24" }), new AIMessage("ok")), { openTasks: () => tasks.store, openActions: () => actions.store });
+    const { pendingActions } = await service.chat(input);
+
+    const outcome = await service.approve("user-1", "jwt", pendingActions[0]!.id);
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.result).not.toContain("secret detail");
+    expect(actions.rows.get("act-1")).toMatchObject({ status: "failed" });
+  });
+
+  it("marks a task that has gone since the proposal as failed, not done", async () => {
+    const tasks = fakeTasks();
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("complete_task", { taskId }), new AIMessage("ok")), { openTasks: () => tasks.store, openActions: () => actions.store });
+    const { pendingActions } = await service.chat(input);
+    tasks.store.complete = async () => null; // deleted in the meantime
+
+    expect(await service.approve("user-1", "jwt", pendingActions[0]!.id)).toMatchObject({ status: "failed", result: "No task with that id was found." });
+  });
+
+  it("runs an approved Google change with the user's own Google token, and reports Google's refusal as failed", async () => {
+    const google = fakeGoogle(200, { id: "draft-1" });
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_draft", { to: "a@example.com", subject: "Hi", body: "Hello" }), new AIMessage("Proposed.")), { google, openActions: () => actions.store });
+    const { pendingActions } = await service.chat(input);
+    expect(google.authHeaders).toEqual([]); // proposing touched nothing
+
+    const outcome = await service.approve("user-1", "jwt", pendingActions[0]!.id);
+
+    expect(outcome.status).toBe("done");
+    expect(google.authHeaders).toEqual(["Bearer google-token"]);
+
+    const refused = setup(model(toolCall("create_draft", { to: "a@example.com", subject: "Hi", body: "Hello" }), new AIMessage("ok")), { google: fakeGoogle(403, { error: "no" }), openActions: () => actions.store });
+    const proposal = await refused.service.chat(input);
+    expect(await refused.service.approve("user-1", "jwt", proposal.pendingActions[0]!.id)).toMatchObject({ status: "failed" });
+  });
+
+  it("shows pending cards again when the conversation is reopened, but not decided ones", async () => {
+    const actions = memoryActions();
+    const { service } = setup(model(toolCall("create_task", { title: "A", dueDate: "2026-11-24" }, "c1"), toolCall("create_task", { title: "B", dueDate: "2026-11-24" }, "c2"), new AIMessage("ok")), {
+      openTasks: () => fakeTasks().store,
+      openActions: () => actions.store,
+    });
+    const { conversationId, pendingActions } = await service.chat(input);
+    await service.reject("user-1", "jwt", pendingActions[0]!.id);
+
+    expect((await service.get("user-1", "jwt", conversationId)).pendingActions.map((a) => a.id)).toEqual([pendingActions[1]!.id]);
   });
 });
