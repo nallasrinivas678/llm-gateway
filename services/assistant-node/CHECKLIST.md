@@ -66,7 +66,8 @@ Last updated: 2026-11-18 (tests, CI and deploy workflow added). Branch `srnalla-
 - [x] Run record (A3, branch `srnalla-run-record`): one `agent_runs` row per chat turn: duration, model, model steps, each tool's name, time and success (with a code when it failed), outcome (`ok`, `step_limit`, `timeout`, `error`) and changes proposed. No message text, tool arguments or answers. A failure to save it is only logged. Unit tested; not tried live yet
 - [x] A call to a Google write tool that could never work (event ending before it starts, bad address, line breaks, bad doc id) is refused when proposed, so no card is shown for it; the checks are shared with the tool server (`src/google-mcp/writeChecks.ts`)
 - [ ] Live check of the run record: after one chat turn, one row appears in `agent_runs` for the signed-in user, and another user cannot read it
-- [ ] Agent evals (A4): about 25 scenarios on a fake backend
+- [x] Agent evals (A4, branch `srnalla-agent-evals`), in `evals/agent/`: a fake backend (tasks, calendar, mailbox, fake Google, fake web search), a scenario format, scoring in plain code, and two tiers. **Harness tier** (a scripted model does the worst thing; 17 scenarios, runs in `npm test`): every write tool only proposes, approve runs once, reject changes nothing, an injection the model obeys can only make a card, bad Google calls and other users' task ids never become cards, an unknown tool does nothing, step limit. **Model tier** (real Gemini; 14 scenarios, `npm run eval:agent`). The gate was broken on purpose to check the harness tier fails when it should (5 scenarios failed)
+- [ ] Run the rest of the model tier (10 of 14 scenarios have not run: the daily model quota ran out after 5 calls; the 4 that ran passed). Needs billing on the key, or a few scenarios a day with `--only`
 
 ## 5. Daily summary (dev)
 
