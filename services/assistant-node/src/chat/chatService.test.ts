@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { loadSettings } from "../config.js";
 import type { FetchFn } from "../google-mcp/common.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
-import { createChatService, TOO_MANY_STEPS_REPLY } from "./chatService.js";
+import { createChatService, titleFrom, toViewMessages, TOO_MANY_STEPS_REPLY } from "./chatService.js";
 import { ConversationNotFoundError, type ConversationStore } from "./conversationStore.js";
 import { rowToMessage, type StoredMessage } from "./messageMapper.js";
 import type { TaskStore } from "./taskTools.js";
@@ -44,17 +44,29 @@ const toolCall = (name: string, args: Record<string, unknown>, id = "call-1") =>
 const model = (...responses: AIMessage[]) => new RecordingModel(responses);
 
 function memoryStore() {
-  const conversations = new Set<string>();
+  const conversations = new Map<string, string | null>(); // id -> title
   const rows = new Map<string, StoredMessage[]>();
+  const summary = (id: string) => ({ id, title: conversations.get(id) ?? null, createdAt: "t", updatedAt: "t" });
   const store: ConversationStore = {
-    async ensureConversation(id) {
+    async ensureConversation(id, title) {
       if (!id) {
         const created = `conv-${conversations.size + 1}`;
-        conversations.add(created);
+        conversations.set(created, title ?? null);
         return created;
       }
       if (!conversations.has(id)) throw new ConversationNotFoundError();
       return id;
+    },
+    async listConversations(limit) {
+      return [...conversations.keys()].reverse().slice(0, limit).map(summary);
+    },
+    async getConversation(id) {
+      if (!conversations.has(id)) throw new ConversationNotFoundError();
+      return summary(id);
+    },
+    async deleteConversation(id) {
+      if (!conversations.delete(id)) throw new ConversationNotFoundError();
+      rows.delete(id);
     },
     async loadMessages(id) {
       return (rows.get(id) ?? []).map((m) =>
@@ -276,5 +288,79 @@ describe("chat service", () => {
   it("refuses a conversation that is not the caller's", async () => {
     const { service } = setup(model(new AIMessage("x")));
     await expect(service.chat({ ...input, conversationId: "someone-elses" })).rejects.toBeInstanceOf(ConversationNotFoundError);
+  });
+});
+
+describe("saved conversations", () => {
+  it("titles a new conversation with its first message, and leaves an existing one alone", async () => {
+    const { service, memory } = setup(model(new AIMessage("Sure."), new AIMessage("Done.")));
+    const first = await service.chat({ ...input, message: "  What is   on my calendar?  " });
+    await service.chat({ ...input, conversationId: first.conversationId, message: "And tomorrow?" });
+
+    const view = await service.get("user-1", "jwt", first.conversationId);
+    expect(view.title).toBe("What is on my calendar?");
+    expect((await service.list("user-1", "jwt")).map((c) => c.id)).toEqual([first.conversationId]);
+    expect(memory.rows.get(first.conversationId)).toHaveLength(4);
+  });
+
+  it("shows the user's messages and each final answer with its tools, never tool calls or tool output", async () => {
+    const google = fakeGoogle(200, { items: [{ summary: "Secret meeting", start: { dateTime: "2026-11-18T09:00:00Z" }, end: { dateTime: "2026-11-18T09:15:00Z" } }] });
+    const { service } = setup(model(toolCall("list_events", { maxResults: 3 }), new AIMessage("You have one meeting.")), { google });
+    const { conversationId } = await service.chat(input);
+
+    const view = await service.get("user-1", "jwt", conversationId);
+    expect(view.messages).toEqual([
+      { role: "user", text: "What is on my calendar?", tools: [] },
+      { role: "assistant", text: "You have one meeting.", tools: ["list_events"] },
+    ]);
+    expect(JSON.stringify(view)).not.toContain("Secret meeting");
+  });
+
+  it("deletes a conversation, and says 'not found' for one that is not the caller's", async () => {
+    const { service } = setup(model(new AIMessage("Hi")));
+    const { conversationId } = await service.chat(input);
+    await service.remove("user-1", "jwt", conversationId);
+    expect(await service.list("user-1", "jwt")).toEqual([]);
+    await expect(service.get("user-1", "jwt", conversationId)).rejects.toBeInstanceOf(ConversationNotFoundError);
+    await expect(service.remove("user-1", "jwt", "someone-elses")).rejects.toBeInstanceOf(ConversationNotFoundError);
+  });
+});
+
+describe("titleFrom", () => {
+  it("keeps a short message as it is, on one line", () => {
+    expect(titleFrom("Plan my\nweek")).toBe("Plan my week");
+  });
+
+  it("cuts a long message at a word and marks the cut", () => {
+    const title = titleFrom("Find every email from the recruiter at Contoso about the senior engineer role and draft a reply");
+    expect(title.length).toBeLessThanOrEqual(63);
+    expect(title.endsWith("...")).toBe(true);
+    expect(title).toBe("Find every email from the recruiter at Contoso about the...");
+  });
+
+  it("cuts a long word in the middle when there is no space to cut at", () => {
+    expect(titleFrom("x".repeat(80))).toBe(`${"x".repeat(60)}...`);
+  });
+});
+
+describe("toViewMessages", () => {
+  it("collects tools across several rounds into the answer that follows them", () => {
+    const view = toViewMessages([
+      { role: "user", content: "Busy?", toolCallId: null, toolCalls: null },
+      { role: "assistant", content: "", toolCallId: null, toolCalls: [{ Id: "1", ToolName: "list_events", ArgumentsJson: "{}" }] },
+      { role: "tool", content: "raw", toolCallId: "1", toolCalls: null },
+      { role: "assistant", content: "", toolCallId: null, toolCalls: [{ Id: "2", ToolName: "list_tasks", ArgumentsJson: "{}" }, { Id: "3", ToolName: "list_events", ArgumentsJson: "{}" }] },
+      { role: "tool", content: "raw", toolCallId: "2", toolCalls: null },
+      { role: "tool", content: "raw", toolCallId: "3", toolCalls: null },
+      { role: "assistant", content: "Fairly busy.", toolCallId: null, toolCalls: null },
+      { role: "user", content: "Thanks", toolCallId: null, toolCalls: null },
+      { role: "assistant", content: "Any time.", toolCallId: null, toolCalls: null },
+    ]);
+    expect(view).toEqual([
+      { role: "user", text: "Busy?", tools: [] },
+      { role: "assistant", text: "Fairly busy.", tools: ["list_events", "list_tasks"] },
+      { role: "user", text: "Thanks", tools: [] },
+      { role: "assistant", text: "Any time.", tools: [] },
+    ]);
   });
 });

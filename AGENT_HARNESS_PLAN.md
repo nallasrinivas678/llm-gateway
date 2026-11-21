@@ -4,7 +4,7 @@ Goal: an assistant inside TaskTide that can look at the user's own tasks, appoin
 
 "Agent harness" here means everything around the model that makes an agent safe and useful: the tools it can call, the rules about which of them may change things, limits on a run, a record of what happened, tests for its behaviour, and a screen in the app. The model itself stays Gemini through LangChain's `createAgent`, which the chat service already uses. We do not write our own agent loop or add an agent framework.
 
-Status: plan only. Nothing here is built.
+Status (2026-11-20): task tools (`list_tasks`, `create_task`, `complete_task`), web search, the limits in A3 except the run record, and the A5 chat page with saved conversations are built. Decided: approve every write at first, and a page with a conversation list before a drawer. The A2 and A3 tables are written as `supabase/migrations/20261120000000_agent_harness.sql`, applied to Supabase on 2026-11-20 (both tables have row-level security; the security advisor flagged nothing on them). Until A2 is built, write tools run when the model calls them.
 
 ## Where we are today
 
@@ -109,11 +109,11 @@ Each phase ends with a stop for review.
 ## Decisions needed (you)
 
 1. **Scope of the first version.** Tasks, appointments and job applications (proposed). Notes and the portfolio can follow.
-2. **Approve every write, or auto-approve safe ones.** Proposed: approve every write at first. Auto-approving something small like "add a note" can come later, once the evals show the agent is reliable.
+2. **Approve every write, or auto-approve safe ones.** Decided (2026-11-20): approve every write at first. Auto-approving something small like "add a note" can come later, once the evals show the agent is reliable.
 3. **Recurring tasks.** Proposed: readable in the first version, writes only for one-off tasks.
 4. **Quota for the evals.** The agent evals call the model many times per scenario (several rounds each). Billing on the key (a full run costs cents) or short runs spread over days, as for the PDF evals.
 5. **Email.** Stays draft-only unless you decide otherwise (already open in the checklist).
-6. **Where the chat lives.** A drawer reachable from every page (proposed) or its own page.
+6. **Where the chat lives.** Decided (2026-11-20): its own page with a list of saved conversations first (built: `/app/chat`); a drawer reachable from every page later, reusing the same parts.
 
 ## Left out on purpose
 

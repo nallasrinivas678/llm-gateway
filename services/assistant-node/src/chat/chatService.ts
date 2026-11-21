@@ -9,7 +9,7 @@ import { createGoogleMcpServer } from "../google-mcp/server.js";
 import type { FetchFn } from "../google-mcp/common.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 import type { ConversationStore } from "./conversationStore.js";
-import { messageToStored, messagesToStored } from "./messageMapper.js";
+import { messageToStored, messagesToStored, type StoredMessage } from "./messageMapper.js";
 import { trimHistory } from "./history.js";
 import { loadMcpTools } from "./mcpTools.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
@@ -47,6 +47,51 @@ export interface ChatResult {
   toolCallsExecuted: string[];
 }
 
+// A saved message as the chat page shows it: what the user said, and each final answer with the
+// tools used for it. Tool calls and raw tool output stay on the server.
+export interface ViewMessage {
+  role: "user" | "assistant";
+  text: string;
+  tools: string[];
+}
+
+export interface ConversationView {
+  id: string;
+  title: string | null;
+  messages: ViewMessage[];
+}
+
+const TITLE_MAX_CHARS = 60;
+const LIST_LIMIT = 50;
+
+// The first message, on one line and cut at a word, so the list needs no extra model call.
+export function titleFrom(message: string): string {
+  const line = message.replace(/\s+/g, " ").trim();
+  if (line.length <= TITLE_MAX_CHARS) return line;
+  const cut = line.slice(0, TITLE_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > TITLE_MAX_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}...`;
+}
+
+export function toViewMessages(stored: StoredMessage[]): ViewMessage[] {
+  const view: ViewMessage[] = [];
+  let tools: string[] = [];
+  for (const m of stored) {
+    if (m.role === "user") {
+      view.push({ role: "user", text: m.content, tools: [] });
+      tools = [];
+    } else if (m.role === "assistant") {
+      for (const call of m.toolCalls ?? []) if (!tools.includes(call.ToolName)) tools.push(call.ToolName);
+      // An assistant message that only asks for tools has no text for the user.
+      if (m.content.trim()) {
+        view.push({ role: "assistant", text: m.content, tools });
+        tools = [];
+      }
+    }
+  }
+  return view;
+}
+
 export function createChatService(deps: ChatDeps) {
   const now = deps.now ?? (() => new Date());
 
@@ -64,7 +109,7 @@ export function createChatService(deps: ChatDeps) {
   return {
     async chat(input: ChatInput): Promise<ChatResult> {
       const store = deps.openStore(input.userId, input.jwt);
-      const conversationId = await store.ensureConversation(input.conversationId);
+      const conversationId = await store.ensureConversation(input.conversationId, input.conversationId ? undefined : titleFrom(input.message));
       // Only the recent part goes to the model; the whole conversation stays saved.
       const history = trimHistory(await store.loadMessages(conversationId), deps.settings.chat.maxHistoryMessages);
 
@@ -109,6 +154,20 @@ export function createChatService(deps: ChatDeps) {
       } finally {
         await google?.close();
       }
+    },
+
+    async list(userId: string, jwt: string) {
+      return deps.openStore(userId, jwt).listConversations(LIST_LIMIT);
+    },
+
+    async get(userId: string, jwt: string, conversationId: string): Promise<ConversationView> {
+      const store = deps.openStore(userId, jwt);
+      const { id, title } = await store.getConversation(conversationId);
+      return { id, title, messages: toViewMessages(messagesToStored(await store.loadMessages(id))) };
+    },
+
+    async remove(userId: string, jwt: string, conversationId: string) {
+      await deps.openStore(userId, jwt).deleteConversation(conversationId);
     },
   };
 }

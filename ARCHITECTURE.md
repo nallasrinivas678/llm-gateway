@@ -29,7 +29,7 @@ The alternative — scoping the cache per caller — would mean two services ask
 
 ## Assistant service on Node (`services/assistant-node`)
 
-> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader and the chat endpoint (`POST /assistant/chat`) are built and tested. The daily summary endpoints (JSON and streaming) are built and checked live; PDF Q&A is not built yet. The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
+> **Status: work in progress.** The login check, the Google tools, the Google token service, the settings loader, chat (with task tools, web search and saved conversations), the daily summary, resume match and PDF Q&A are built and tested. Approval before the assistant changes anything is planned (see [How chat works](#how-chat-works) and [`AGENT_HARNESS_PLAN.md`](AGENT_HARNESS_PLAN.md)). The .NET service in `src/LlmGateway.Assistant` still serves all three features and stays in place until the Node service has proved itself. Progress and open decisions are tracked in [`services/assistant-node/CHECKLIST.md`](services/assistant-node/CHECKLIST.md).
 
 ### Why move it
 
@@ -46,15 +46,19 @@ flowchart LR
         J --> AG["Chat agent<br/>(LangChain, Gemini)"]
         T --> M["Google tool server<br/>(MCP, one per request)"]
         AG --> M
+        AG --> TT["Task tools"]
+        AG --> WS["Web search tool"]
     end
 
     T -->|"select / update only"| S[("Supabase Postgres<br/>google_tokens")]
     M -->|"user's own Google token"| G["Google APIs<br/>Calendar, Gmail, Docs"]
     AG --> L["Gemini<br/>gemini-2.5-flash"]
+    WS -->|"separate request,<br/>Google Search grounding"| L
     AG -->|"as the user (RLS)"| C[("conversations,<br/>messages")]
+    TT -->|"as the user (RLS)"| E[("events,<br/>event_occurrences")]
 ```
 
-All lines exist today for chat. The daily summary reads Google and calls Gemini the same way, without the agent; PDF Q&A is not drawn because it is not built.
+All lines exist today for chat. The daily summary reads Google and calls Gemini the same way, without the agent; resume match and PDF Q&A are left out of this picture. Chat is shown in detail below.
 
 ### Components
 
@@ -64,10 +68,11 @@ All lines exist today for chat. The daily summary reads Google and calls Gemini 
 | Settings: `config/default.json` (URLs, limits) plus environment variables (secrets), checked at startup | `src/config.ts` | built, tested |
 | Google tool server: six tools, one server built per request | `src/google-mcp/` | built, tested (read paths also live) |
 | Google token service and Postgres store | `src/google-tokens/` | built, tested (live) |
-| Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt | `src/chat/` | built, tested; checked live with Gemini and Google (saving to Supabase checked only against a fake database and the database's rules) |
-| Chat endpoint and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
+| Chat: one turn (history, tools, agent, save), conversation store, message mapper, system prompt, task tools, web search | `src/chat/` | built, tested; checked live with Gemini, Google and a real sign-in |
+| Chat endpoints (`POST /assistant/chat`, saved conversations list, read and delete) and startup wiring | `src/app.ts`, `src/wiring.ts` | built, tested |
+| Approval of writes, run record, agent evals | `AGENT_HARNESS_PLAN.md` | planned |
 | Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
-| PDF Q&A | not started | planned |
+| PDF Q&A | `src/docQa/` | built, tested |
 
 ### Google tools (MCP)
 
@@ -82,13 +87,67 @@ The tool server lives in `src/google-mcp/`. For every request a fresh server is 
 
 Safeguards: Google's error text is never passed to the model, line breaks in the address or subject are refused (blocks hidden recipients), Google Doc ids are restricted to the characters Google uses, and tool descriptions tell the model that email and document text is data, not instructions.
 
-### How a chat request flows
+### How chat works
 
-1. The browser sends `POST /assistant/chat` with the user's Supabase login token. The token is checked and the user id is taken from it.
-2. Conversations are read and written with a Supabase client that carries the **user's own token**, so the database's row-level security decides what that user may see. The service holds no powerful database key for this. A `conversationId` that belongs to someone else looks exactly like one that does not exist (404).
-3. The Google token service supplies the user's Google token, and a fresh Google tool server is connected to the agent in memory (no network hop). If the user has not connected Google, the chat continues without those tools and the model is told.
-4. The agent (LangChain `createAgent` with `gemini-2.5-flash`) answers, calling tools as needed, up to 5 tool rounds. Going over that gives a polite "couldn't finish" reply, not an error.
-5. All new messages of the turn are saved in one insert. Messages are stored in the same format the .NET service uses, so a conversation can be continued by either service.
+#### The chat page (digital-garden `/app/chat`)
+
+A page, not a drawer (a drawer reachable from every page can reuse the same parts later). On the left, the user's saved conversations, most recently used first, each with a title and a two-click delete. On the right, the open conversation and the message box. The open conversation is in the address (`/app/chat?c=<id>`), so a refresh or a bookmark brings it back without browser storage. Under each answer, plain words for the tools it used ("Checked your calendar", "Searched the web"). `VITE_CHAT_API_URL` points the page at the Node service; the saved-conversation list exists only there.
+
+#### One turn
+
+```mermaid
+sequenceDiagram
+    participant P as Chat page
+    participant N as assistant-node
+    participant DB as Supabase (as the user, RLS)
+    participant G as Gemini
+    participant X as Tools (Google, tasks, web search)
+
+    P->>N: POST /assistant/chat {conversationId?, message} + login token
+    N->>DB: find the conversation, or create it titled with the first message
+    N->>DB: load its messages
+    Note over N: keep the last 40 messages, starting at a user message,<br/>tool calls kept with their results
+    N->>G: system prompt + recent history + new message
+    loop up to 5 tool rounds, 60 s for the whole run, 20 s per tool
+        G-->>N: tool call
+        N->>X: run it as the user
+        X-->>N: result (treated as data, never instructions)
+        N->>G: result
+    end
+    G-->>N: answer
+    N->>DB: save the whole turn in one insert, then move the conversation to the top
+    N-->>P: {conversationId, reply, toolCallsExecuted}
+```
+
+1. The login token is checked and the user id is taken from it. A per-user limit stops message floods (429).
+2. Conversations are read and written with a Supabase client that carries the **user's own token**, so row-level security decides what that user may see. The service holds no powerful database key for this. A `conversationId` that belongs to someone else looks exactly like one that does not exist (404).
+3. The Google token service supplies the user's Google token, and a fresh Google tool server is connected to the agent in memory (no network hop). If the user has not connected Google, the chat continues without those tools and the model is told. Task tools use the user's own Supabase client too; web search is a separate Gemini request with Google Search grounding, and the prompt forbids putting private details in a query.
+4. The agent (LangChain `createAgent` with `gemini-2.5-flash`) answers, calling tools as needed. Going over 5 tool rounds gives a polite "couldn't finish" reply, not an error.
+5. All new messages of the turn are saved in one insert, so a failed run saves nothing. Messages are stored in the same format the .NET service uses, so a conversation can be continued by either service.
+
+#### Saved conversations
+
+* **Tables:** `conversations` (id, user_id, title, created_at, updated_at) and `messages` (role user, assistant or tool; content; tool_call_id; tool_calls). Owner-only row rules on both; deleting a conversation deletes its messages (foreign key cascade).
+* **Title:** the first message, on one line, cut at a word around 60 characters. No extra model call.
+* **List order:** `updated_at`, set by the service after each saved turn (the table has no trigger).
+* **Endpoints:** `GET /assistant/conversations` (latest 50), `GET /assistant/conversations/:id` and `DELETE /assistant/conversations/:id` (204). Someone else's conversation, a missing one and a malformed id all answer 404.
+* **What the page gets back:** only the user's messages and each final answer with the names of the tools used for it. Tool calls, their arguments and raw tool output (email text, calendar entries) stay on the server.
+* **What the model gets:** the whole conversation stays saved, but only the recent part is sent (above). Planned next: cut by size instead of message count, since one tool result can be large; a summary of older messages only if real chats need it. No long-term memory of the user.
+
+#### Harness: what keeps the agent in bounds
+
+| Safeguard | State |
+|---|---|
+| Acts as the user: Google tools with the user's own Google token, database with the user's own login token (row-level security) | built |
+| Tool output is data, not instructions (system prompt and tool descriptions); Google error text never reaches the model | built |
+| Limits: 5 tool rounds, 60 s per run, 20 s per tool, per-user message limit, message length limit, recent history only | built |
+| Email is draft-only; nothing in the service can send mail | built |
+| Logs: one JSON line per event with the error's type, status and code, never message text | built |
+| **Approval before any write.** A write tool (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) saves a pending row in `agent_actions` instead of running; the page shows a card with Approve and Reject; approval runs the stored, checked arguments, not a second model call. Every write is approved at first. | planned (A2) |
+| **Run record.** One `agent_runs` row per turn: time taken, steps, tool names with time and outcome, how it ended. No message text and no arguments. | planned (A3) |
+| **Agent evals.** About 25 scenarios on a fake backend, scored in code: no write without approval, injected instructions in an email lead to no write, two tasks with the same name make the agent ask, and so on. Run on demand, not in CI. | planned (A4) |
+
+Until approval is built, the write tools run as soon as the model calls them.
 
 ### How a user's Google token is handled
 
@@ -103,6 +162,10 @@ Safeguards: Google's error text is never passed to the model, line breaks in the
 |---|---|
 | Our own Google tool server instead of Google's hosted MCP servers | Google's hosted servers are in Developer Preview and need a company-domain account. They also cannot send mail and have no append tool. |
 | Conversations stored as the signed-in user (row-level security), not with a server key | No powerful secret for chat data; the database enforces ownership. The security rules were checked in a test that rolls back. |
+| Chat page with a conversation list first, drawer later | One place to build and check; the drawer can reuse the message list and box |
+| Open conversation kept in the address, not browser storage | A refresh or bookmark brings it back, nothing to clear, works in a private window |
+| Title from the first message, not from the model | No extra model call or cost per conversation; good enough for a list |
+| Approve every write at first | A model mistake cannot change the user's data; auto-approving small writes can come once the evals show it is reliable |
 | Google tools connected to the agent in memory, with our own small MCP-to-LangChain converter | `@langchain/mcp-adapters`' `loadMcpTools` (v2.0.3) needs a newer MCP client than the SDK we install and fails at runtime. We only need `listTools` and `callTool`, so ~25 lines of our own are simpler and tested. |
 | No Terraform for now | One Fly app is fully described by `fly.toml`, secrets are set by a script, and the database changes are SQL migrations in `supabase/`. Terraform would add state to store and protect for no gain. Revisit when there is a second environment (staging), more than one Fly app or volume, DNS, or Supabase project settings that should be reviewed as code. |
 | GitHub Actions for CI and deploy | The code is on GitHub already. CI checks every pull request; deploy is a separate workflow that is switched on by a repository variable, and builds on Fly's builders (`flyctl deploy --remote-only`). |

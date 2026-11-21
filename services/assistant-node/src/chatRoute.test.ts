@@ -116,3 +116,83 @@ describe("POST /assistant/chat", () => {
     expect((await post(createApp(config), { message: "hi" })).status).toBe(503);
   });
 });
+
+describe("saved conversations routes", () => {
+  const id = "3f2b8c1e-5a4d-4e6f-8b7a-9c0d1e2f3a4b";
+  const summary = { id, title: "Plan my week", createdAt: "2026-11-20T00:00:00Z", updatedAt: "2026-11-20T01:00:00Z" };
+
+  function fakeConversations(fail?: Error) {
+    const calls: { op: string; userId: string; jwt: string; id?: string }[] = [];
+    const run = async <T>(op: string, userId: string, jwt: string, value: T, conversationId?: string) => {
+      calls.push({ op, userId, jwt, id: conversationId });
+      if (fail) throw fail;
+      return value;
+    };
+    const chat = {
+      list: (userId: string, jwt: string) => run("list", userId, jwt, [summary]),
+      get: (userId: string, jwt: string, cid: string) => run("get", userId, jwt, { id: cid, title: "Plan my week", messages: [{ role: "user", text: "hi", tools: [] }] }, cid),
+      remove: (userId: string, jwt: string, cid: string) => run("remove", userId, jwt, undefined, cid),
+    } as unknown as ChatService;
+    return { chat, calls };
+  }
+
+  const call = async (app: ReturnType<typeof createApp>, method: string, path: string, withToken = true) =>
+    app.request(path, { method, headers: withToken ? { authorization: `Bearer ${await token()}` } : {} });
+
+  it("requires a login token", async () => {
+    const { chat } = fakeConversations();
+    expect((await call(createApp(config, { chat }), "GET", "/assistant/conversations", false)).status).toBe(401);
+  });
+
+  it("lists the caller's conversations as the caller", async () => {
+    const { chat, calls } = fakeConversations();
+    const response = await call(createApp(config, { chat }), "GET", "/assistant/conversations");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ conversations: [summary] });
+    expect(calls[0]).toMatchObject({ op: "list", userId });
+    expect(calls[0]?.jwt.split(".")).toHaveLength(3);
+  });
+
+  it("returns one conversation's messages", async () => {
+    const { chat, calls } = fakeConversations();
+    const response = await call(createApp(config, { chat }), "GET", `/assistant/conversations/${id}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id, title: "Plan my week", messages: [{ role: "user", text: "hi", tools: [] }] });
+    expect(calls[0]).toMatchObject({ op: "get", userId, id });
+  });
+
+  it("deletes a conversation with 204", async () => {
+    const { chat, calls } = fakeConversations();
+    const response = await call(createApp(config, { chat }), "DELETE", `/assistant/conversations/${id}`);
+    expect(response.status).toBe(204);
+    expect(calls[0]).toMatchObject({ op: "remove", userId, id });
+  });
+
+  it.each(["GET", "DELETE"])("%s answers 404 for an id that is not a UUID, without touching the store", async (method) => {
+    const { chat, calls } = fakeConversations();
+    expect((await call(createApp(config, { chat }), method, "/assistant/conversations/abc")).status).toBe(404);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["GET", "DELETE"])("%s answers 404 for a conversation that is not the caller's", async (method) => {
+    const { chat } = fakeConversations(new ConversationNotFoundError());
+    const response = await call(createApp(config, { chat }), method, `/assistant/conversations/${id}`);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Conversation not found." });
+  });
+
+  it("answers 502 with a plain message when the database fails, and never shows its message", async () => {
+    const { chat } = fakeConversations(new Error("relation secret_table does not exist"));
+    const response = await call(createApp(config, { chat }), "GET", "/assistant/conversations");
+    expect(response.status).toBe(502);
+    expect(JSON.stringify(await response.json())).not.toContain("secret_table");
+  });
+
+  it.each([
+    ["GET", "/assistant/conversations"],
+    ["GET", `/assistant/conversations/${id}`],
+    ["DELETE", `/assistant/conversations/${id}`],
+  ])("%s %s answers 503 when chat is not configured", async (method, path) => {
+    expect((await call(createApp(config, {}), method, path)).status).toBe(503);
+  });
+});

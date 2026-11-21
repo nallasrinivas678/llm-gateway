@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
@@ -57,6 +57,48 @@ export function createApp(config: Config, services: Services = {}) {
       // Log what failed, never what the user said.
       logError("chat failed", error);
       return c.json({ error: "The assistant could not complete the request." }, 502);
+    }
+  });
+
+  // Saved conversations for the chat page's list. Read and deleted as the user, so row-level
+  // security decides ownership; someone else's conversation, a missing one and a malformed id all
+  // answer 404.
+  const conversationId = z.string().uuid();
+  const conversationFailure = (c: Context<AuthEnv>, what: string, error: unknown) => {
+    if (error instanceof ConversationNotFoundError) return c.json({ error: "Conversation not found." }, 404);
+    logError(what, error);
+    return c.json({ error: "Your conversations could not be loaded." }, 502);
+  };
+
+  assistant.get("/conversations", async (c) => {
+    if (!services.chat) return c.json({ error: "Chat is not configured on this server." }, 503);
+    try {
+      return c.json({ conversations: await services.chat.list(c.get("userId"), c.get("jwt")) });
+    } catch (error) {
+      return conversationFailure(c, "conversation list failed", error);
+    }
+  });
+
+  assistant.get("/conversations/:id", async (c) => {
+    if (!services.chat) return c.json({ error: "Chat is not configured on this server." }, 503);
+    const id = conversationId.safeParse(c.req.param("id"));
+    if (!id.success) return c.json({ error: "Conversation not found." }, 404);
+    try {
+      return c.json(await services.chat.get(c.get("userId"), c.get("jwt"), id.data));
+    } catch (error) {
+      return conversationFailure(c, "conversation read failed", error);
+    }
+  });
+
+  assistant.delete("/conversations/:id", async (c) => {
+    if (!services.chat) return c.json({ error: "Chat is not configured on this server." }, 503);
+    const id = conversationId.safeParse(c.req.param("id"));
+    if (!id.success) return c.json({ error: "Conversation not found." }, 404);
+    try {
+      await services.chat.remove(c.get("userId"), c.get("jwt"), id.data);
+      return c.body(null, 204);
+    } catch (error) {
+      return conversationFailure(c, "conversation delete failed", error);
     }
   });
 

@@ -12,24 +12,51 @@ export class ConversationNotFoundError extends Error {
   }
 }
 
-export interface ConversationStore {
-  // Returns the id of the existing conversation, or creates a new one when no id is given.
-  ensureConversation(conversationId?: string): Promise<string>;
-  loadMessages(conversationId: string): Promise<BaseMessage[]>;
-  appendMessages(conversationId: string, messages: StoredMessage[]): Promise<void>;
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
+
+export interface ConversationStore {
+  // Returns the id of the existing conversation, or creates a new one (with this title) when no id is given.
+  ensureConversation(conversationId?: string, title?: string): Promise<string>;
+  loadMessages(conversationId: string): Promise<BaseMessage[]>;
+  // Saves a turn and moves the conversation to the top of the list.
+  appendMessages(conversationId: string, messages: StoredMessage[]): Promise<void>;
+  // The caller's conversations, most recently used first.
+  listConversations(limit: number): Promise<ConversationSummary[]>;
+  getConversation(conversationId: string): Promise<ConversationSummary>;
+  // Its messages go with it (the foreign key cascades).
+  deleteConversation(conversationId: string): Promise<void>;
+}
+
+interface ConversationRow {
+  id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const toSummary = (row: ConversationRow): ConversationSummary => ({ id: row.id, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at });
+const failure = (what: string, error: { code?: string }) => new Error(`Could not ${what} (${error.code ?? "unknown"})`);
 
 export function createSupabaseConversationStore(client: SupabaseClient, userId: string): ConversationStore {
   return {
-    async ensureConversation(conversationId) {
+    async ensureConversation(conversationId, title) {
       if (conversationId) {
         const { data, error } = await client.from("conversations").select("id").eq("id", conversationId).maybeSingle();
-        if (error) throw new Error(`Could not read the conversation (${error.code ?? "unknown"})`);
+        if (error) throw failure("read the conversation", error);
         if (!data) throw new ConversationNotFoundError();
         return data.id as string;
       }
-      const { data, error } = await client.from("conversations").insert({ user_id: userId }).select("id").single();
-      if (error) throw new Error(`Could not create the conversation (${error.code ?? "unknown"})`);
+      const { data, error } = await client
+        .from("conversations")
+        .insert({ user_id: userId, title: title ?? null })
+        .select("id")
+        .single();
+      if (error) throw failure("create the conversation", error);
       return data.id as string;
     },
 
@@ -39,7 +66,7 @@ export function createSupabaseConversationStore(client: SupabaseClient, userId: 
         .select("role, content, tool_call_id, tool_calls")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: true });
-      if (error) throw new Error(`Could not read messages (${error.code ?? "unknown"})`);
+      if (error) throw failure("read messages", error);
       return (data as MessageRow[]).map(rowToMessage);
     },
 
@@ -58,7 +85,36 @@ export function createSupabaseConversationStore(client: SupabaseClient, userId: 
         created_at: new Date(start + i).toISOString(),
       }));
       const { error } = await client.from("messages").insert(rows);
-      if (error) throw new Error(`Could not save messages (${error.code ?? "unknown"})`);
+      if (error) throw failure("save messages", error);
+      // The table has no trigger for this. A failure here only affects the list order, so the
+      // saved turn is not undone for it.
+      const touched = await client.from("conversations").update({ updated_at: new Date(start).toISOString() }).eq("id", conversationId);
+      if (touched.error) throw failure("update the conversation", touched.error);
+    },
+
+    async listConversations(limit) {
+      const { data, error } = await client
+        .from("conversations")
+        .select("id, title, created_at, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(limit);
+      if (error) throw failure("list conversations", error);
+      return (data as ConversationRow[]).map(toSummary);
+    },
+
+    async getConversation(conversationId) {
+      const { data, error } = await client.from("conversations").select("id, title, created_at, updated_at").eq("id", conversationId).maybeSingle();
+      if (error) throw failure("read the conversation", error);
+      if (!data) throw new ConversationNotFoundError();
+      return toSummary(data as ConversationRow);
+    },
+
+    async deleteConversation(conversationId) {
+      // Row-level security limits the delete to the caller's own rows; asking for the deleted ids
+      // tells a missing (or someone else's) conversation apart from a deleted one.
+      const { data, error } = await client.from("conversations").delete().eq("id", conversationId).select("id");
+      if (error) throw failure("delete the conversation", error);
+      if (!data || data.length === 0) throw new ConversationNotFoundError();
     },
   };
 }
