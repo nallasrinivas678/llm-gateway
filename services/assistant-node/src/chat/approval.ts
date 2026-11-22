@@ -3,11 +3,20 @@
 // stored arguments through the real tool (see chatService.approve).
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import type { PendingAction } from "./actionStore.js";
+import { describePatch, toPatch } from "./profileTool.js";
 
 // Every tool that changes something. Email stays draft-only, so create_draft is the only mail tool.
-export const WRITE_TOOLS = new Set(["create_task", "complete_task", "create_event", "create_draft", "append_to_doc"]);
+export const WRITE_TOOLS = new Set(["create_task", "complete_task", "create_event", "create_draft", "append_to_doc", "save_profile"]);
 
-const FAILURE_PREFIXES = ["The tool call failed", "The task tool failed", "The web search failed", "No task with that id"];
+const FAILURE_PREFIXES = [
+  "The tool call failed",
+  "The task tool failed",
+  "The web search failed",
+  "The document tool failed",
+  "The weather lookup failed",
+  "The calculator failed",
+  "No task with that id",
+];
 
 // The tools answer in text (so the model can read it), so a failure is told from its wording.
 export const isFailureText = (text: string): boolean => FAILURE_PREFIXES.some((prefix) => text.startsWith(prefix));
@@ -33,6 +42,8 @@ export function previewFor(tool: string, args: Record<string, unknown>, taskTitl
       return `Save an email draft to ${str(args.to)}, subject "${str(args.subject)}" (it is not sent)`;
     case "append_to_doc":
       return `Add to the end of a Google Doc: "${str(args.text, 120)}"`;
+    case "save_profile":
+      return `Remember: ${str(describePatch(toPatch(args)), 200)}`;
     default:
       return `Run ${tool}`;
   }

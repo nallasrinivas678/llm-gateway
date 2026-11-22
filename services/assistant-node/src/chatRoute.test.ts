@@ -130,6 +130,39 @@ describe("POST /assistant/chat", () => {
     expect(calls).toHaveLength(config.settings.chat.requestsPerMinute);
   });
 
+  it("passes the browser's time zone and the mode on", async () => {
+    const { chat, calls } = fakeChat(ok);
+    const app = createApp(config, { chat });
+    await post(app, { message: "hi", timeZone: "America/Los_Angeles", mode: "research" });
+    expect(calls[0]).toMatchObject({ timeZone: "America/Los_Angeles", mode: "research" });
+    await post(app, { message: "hi", timeZone: null });
+    expect(calls[1]?.timeZone).toBeUndefined();
+    expect(calls[1]?.mode).toBeUndefined();
+  });
+
+  it("rejects a mode that does not exist and a time zone that is far too long", async () => {
+    const { chat, calls } = fakeChat(ok);
+    const app = createApp(config, { chat });
+    expect((await post(app, { message: "hi", mode: "root" })).status).toBe(400);
+    expect((await post(app, { message: "hi", timeZone: "x".repeat(65) })).status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("gives research its own, lower limit per hour without using up normal chat", async () => {
+    const limited = { ...config, settings: { ...config.settings, chat: { ...config.settings.chat, requestsPerMinute: 100, research: { ...config.settings.chat.research, requestsPerHour: 2 } } } };
+    const { chat, calls } = fakeChat(ok);
+    const app = createApp(limited, { chat });
+    expect((await post(app, { message: "a", mode: "research" })).status).toBe(200);
+    expect((await post(app, { message: "b", mode: "research" })).status).toBe(200);
+
+    const blocked = await post(app, { message: "c", mode: "research" });
+    expect(blocked.status).toBe(429);
+    expect((await blocked.json()).error).toContain("research");
+    // Normal chat is still open, and the blocked request never reached the assistant.
+    expect((await post(app, { message: "d" })).status).toBe(200);
+    expect(calls.map((c) => c.message)).toEqual(["a", "b", "d"]);
+  });
+
   it("answers 503 when chat is not configured", async () => {
     expect((await post(createApp(config), { message: "hi" })).status).toBe(503);
   });

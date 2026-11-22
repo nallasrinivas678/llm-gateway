@@ -14,6 +14,8 @@ describe("previewFor", () => {
     ["create_event", { summary: "Dentist", start: "2026-11-24T09:00:00-08:00", end: "2026-11-24T10:00:00-08:00" }, undefined, 'Add the calendar event "Dentist" from 2026-11-24T09:00:00-08:00 to 2026-11-24T10:00:00-08:00'],
     ["create_draft", { to: "a@example.com", subject: "Hello", body: "..." }, undefined, 'Save an email draft to a@example.com, subject "Hello" (it is not sent)'],
     ["append_to_doc", { documentId: "d", text: "Notes" }, undefined, 'Add to the end of a Google Doc: "Notes"'],
+    ["save_profile", { homeCity: "Oakland", defaultMeetingMinutes: 45 }, undefined, "Remember: home city Oakland, usual meeting length 45 minutes"],
+    ["save_profile", { timeZone: null }, undefined, "Remember: forget the time zone"],
     ["something_new", {}, undefined, "Run something_new"],
   ])("%s", (tool, args, title, expected) => {
     expect(previewFor(tool, args, title)).toBe(expected);
@@ -29,7 +31,7 @@ describe("previewFor", () => {
 
 describe("what counts as a write", () => {
   it("covers every tool that changes something, and none that only reads", () => {
-    expect([...WRITE_TOOLS].sort()).toEqual(["append_to_doc", "complete_task", "create_draft", "create_event", "create_task"]);
+    expect([...WRITE_TOOLS].sort()).toEqual(["append_to_doc", "complete_task", "create_draft", "create_event", "create_task", "save_profile"]);
     for (const reader of ["list_events", "search_emails", "read_doc", "list_tasks", "web_search"]) expect(WRITE_TOOLS.has(reader)).toBe(false);
   });
 

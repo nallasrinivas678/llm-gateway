@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { GraphRecursionError } from "@langchain/langgraph";
 import { createAgent } from "langchain";
@@ -11,7 +11,12 @@ import type { FetchFn } from "../google-mcp/common.js";
 import { GoogleReconnectRequired } from "../google-tokens/tokenService.js";
 import { logError } from "../log.js";
 import type { ActionStore, PendingAction } from "./actionStore.js";
-import { ActionNotFoundError, ActionNotPendingError, isFailureText, previewFor, withApproval } from "./approval.js";
+import { ActionNotFoundError, ActionNotPendingError, WRITE_TOOLS, isFailureText, previewFor, withApproval } from "./approval.js";
+import { calculatorTool } from "./calculatorTool.js";
+import { documentTools, type DocumentAccess } from "./documentTools.js";
+import { withScan } from "./injectionScan.js";
+import { localTime, validTimeZone } from "./localTime.js";
+import { profileProblem, profileTool, type Profile, type ProfileStore } from "./profileTool.js";
 import type { ConversationStore } from "./conversationStore.js";
 import { messageToStored, messagesToStored, type StoredMessage } from "./messageMapper.js";
 import { trimHistory } from "./history.js";
@@ -20,6 +25,35 @@ import { outcomeOf, withTiming, type RecordedToolCall, type RunOutcome, type Run
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { taskTools, type TaskStore } from "./taskTools.js";
 import { webSearchTool, type WebSearchFn } from "./webSearch.js";
+import { weatherTool, type WeatherFn } from "./weatherTool.js";
+
+const WRAP_UP =
+  "You have used all the research steps you are allowed. Using only what you have found so far, write the answer now: a short answer, then the sources you used, and say what you could not confirm. Do not call any tools.";
+
+// The messages up to the last finished tool round: a model message that asked for tools whose answers
+// never came cannot be sent to the model again.
+export function completedPrefix(messages: BaseMessage[]): BaseMessage[] {
+  let end = messages.length;
+  while (end > 0) {
+    const last = messages[end - 1];
+    if (last instanceof AIMessage && (last.tool_calls?.length ?? 0) > 0) end--;
+    else break;
+  }
+  return messages.slice(0, end);
+}
+
+// One model call, without tools, that turns the research done so far into an answer. Null when it fails.
+async function answerFromProgress(model: BaseChatModel, systemPrompt: string, latest: BaseMessage[], timeoutSeconds: number): Promise<AIMessage | null> {
+  try {
+    const answer = await model.invoke([new SystemMessage(systemPrompt), ...completedPrefix(latest), new HumanMessage(WRAP_UP)], {
+      signal: AbortSignal.timeout(timeoutSeconds * 1000),
+    });
+    return answer instanceof AIMessage ? answer : new AIMessage(String(answer.content));
+  } catch (error) {
+    logError("the research wrap-up failed", error);
+    return null;
+  }
+}
 
 export const TOO_MANY_STEPS_REPLY =
   "I couldn't finish that request. Please try a simpler request, or break it into smaller steps.";
@@ -35,6 +69,12 @@ export interface ChatDeps {
   webSearch?: WebSearchFn;
   // When given, the model also gets the user's TaskTide task tools.
   openTasks?: (userId: string, jwt: string) => TaskStore;
+  // When given, the model also gets get_weather (the forecast for a place).
+  weather?: WeatherFn;
+  // When given, the model also gets the user's uploaded PDFs as list_documents and ask_document.
+  openDocuments?: (userId: string, jwt: string) => DocumentAccess;
+  // When given, what the user asked the assistant to remember goes into the prompt, and save_profile exists.
+  openProfile?: (userId: string, jwt: string) => ProfileStore;
   // When given, a tool that changes something only proposes the change; the user approves it.
   openActions?: (userId: string, jwt: string) => ActionStore;
   // When given, each turn leaves a record of its timing and outcome (no message text).
@@ -47,6 +87,10 @@ export interface ChatInput {
   jwt: string;
   conversationId?: string;
   message: string;
+  // The browser's IANA time zone (for example America/Los_Angeles); ignored when it is not a real one.
+  timeZone?: string;
+  // "research": reading tools only, more steps and time, and an answer with sources.
+  mode?: "chat" | "research";
 }
 
 // Same shape the .NET POST /assistant/chat returns.
@@ -130,7 +174,7 @@ export function createChatService(deps: ChatDeps) {
   async function runApproved(userId: string, jwt: string, toolName: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
     let google: Awaited<ReturnType<typeof connectGoogleTools>> | null = null;
     try {
-      const own = deps.openTasks ? taskTools(deps.openTasks(userId, jwt)) : [];
+      const own = [...(deps.openTasks ? taskTools(deps.openTasks(userId, jwt)) : []), ...(deps.openProfile ? [profileTool(deps.openProfile(userId, jwt))] : [])];
       let tools = own;
       if (!own.some((t) => t.name === toolName)) {
         google = await connectGoogleTools(await deps.getGoogleToken(userId));
@@ -155,6 +199,20 @@ export function createChatService(deps: ChatDeps) {
       const conversationId = await store.ensureConversation(input.conversationId, input.conversationId ? undefined : titleFrom(input.message));
       // Only the recent part goes to the model; the whole conversation stays saved.
       const history = trimHistory(await store.loadMessages(conversationId), deps.settings.chat.maxHistoryMessages);
+      const research = input.mode === "research";
+      const limits = research ? deps.settings.chat.research : deps.settings.chat;
+
+      // What the user asked to be remembered. A failure here must not stop the chat.
+      const profileStore = deps.openProfile?.(input.userId, input.jwt);
+      let profile: Profile | null = null;
+      try {
+        profile = (await profileStore?.get()) ?? null;
+      } catch (error) {
+        logError("reading the profile failed", error);
+      }
+      // The profile's time zone wins over the browser's; with neither the model gets the UTC date.
+      const zone = validTimeZone(profile?.timeZone) ?? validTimeZone(input.timeZone);
+      const local = zone ? localTime(now(), zone) : undefined;
 
       // Not connected to Google (or access revoked): still chat, but without the Google tools,
       // and let the model say so. Any other failure is a real error and is passed up.
@@ -177,16 +235,42 @@ export function createChatService(deps: ChatDeps) {
       try {
         const tasks = deps.openTasks?.(input.userId, input.jwt);
         const actions = deps.openActions?.(input.userId, input.jwt);
-        const allTools = [...(google?.tools ?? []), ...(deps.webSearch ? [webSearchTool(deps.webSearch)] : []), ...(tasks ? taskTools(tasks) : [])];
+        const docs = deps.openDocuments?.(input.userId, input.jwt);
+        const everyTool = [
+          ...(google?.tools ?? []),
+          ...(deps.webSearch ? [webSearchTool(deps.webSearch)] : []),
+          ...(docs ? documentTools(docs) : []),
+          ...(deps.weather ? [weatherTool(deps.weather, deps.settings.chat.weather.maxDays)] : []),
+          calculatorTool(),
+          ...(tasks ? taskTools(tasks) : []),
+          ...(profileStore ? [profileTool(profileStore)] : []),
+        ];
+        // Research mode only reads: nothing that changes something is offered, so there are no cards.
+        const allTools = withScan(research ? everyTool.filter((tool) => !WRITE_TOOLS.has(tool.name)) : everyTool, isFailureText);
+        const approvalOn = actions !== undefined && !research;
+        const systemPrompt = buildSystemPrompt({
+          today: now().toISOString().slice(0, 10),
+          googleConnected: google !== null,
+          local,
+          profile: profile ?? undefined,
+          webSearch: deps.webSearch !== undefined,
+          tasks: deps.openTasks !== undefined,
+          approval: approvalOn,
+          documents: docs !== undefined,
+          weather: deps.weather !== undefined,
+          calculator: true,
+          profileTool: profileStore !== undefined && !research,
+          research,
+        });
         const agent = createAgent({
           model: deps.model,
           // With approval on, a tool that changes something saves a proposal instead of running.
           tools: withTiming(
-            actions
+            actions && approvalOn
             ? withApproval(allTools, {
                 describe: async (tool, args) => {
                   // A call that could never work is refused now, so a card is never shown for it.
-                  const problem = writeProblem(tool, args, deps.settings.google);
+                  const problem = tool === "save_profile" ? profileProblem(args) : writeProblem(tool, args, deps.settings.google);
                   if (problem) return { refusal: `Nothing was proposed because the input is not valid (${problem}). Correct it, or ask the user.` };
                   if (tool !== "complete_task") return { preview: previewFor(tool, args) };
                   const task = tasks ? await tasks.get(String(args.taskId)) : null;
@@ -198,31 +282,33 @@ export function createChatService(deps: ChatDeps) {
             : allTools,
             toolCalls,
           ),
-          systemPrompt: buildSystemPrompt({
-            today: now().toISOString().slice(0, 10),
-            googleConnected: google !== null,
-            webSearch: deps.webSearch !== undefined,
-            tasks: deps.openTasks !== undefined,
-            approval: actions !== undefined,
-          }),
+          systemPrompt,
         });
 
         const userMessage = new HumanMessage(input.message);
         let produced: BaseMessage[];
+        // Each tool round is two graph steps (model, then tools); +1 for the final answer.
+        const config = { recursionLimit: limits.maxToolRounds * 2 + 1, signal: AbortSignal.timeout(limits.runTimeoutSeconds * 1000) };
+        let latest: BaseMessage[] = [...history, userMessage];
         try {
-          // Each tool round is two graph steps (model, then tools); +1 for the final answer.
-          const result = await agent.invoke(
-            { messages: [...history, userMessage] },
-            { recursionLimit: deps.settings.chat.maxToolRounds * 2 + 1, signal: AbortSignal.timeout(deps.settings.chat.runTimeoutSeconds * 1000) },
-          );
-          produced = (result.messages as BaseMessage[]).slice(history.length);
+          if (research) {
+            // Keep the latest state as the run goes, so that at the step limit what was found is not lost.
+            const states = await agent.stream({ messages: latest }, { ...config, streamMode: "values" });
+            for await (const state of states) latest = state.messages as BaseMessage[];
+            produced = latest.slice(history.length);
+          } else {
+            const result = await agent.invoke({ messages: latest }, config);
+            produced = (result.messages as BaseMessage[]).slice(history.length);
+          }
           steps = produced.filter((m) => m instanceof AIMessage).length;
         } catch (error) {
           if (!(error instanceof GraphRecursionError)) throw error;
-          // Keep the question and the apology; the half-finished tool calls are dropped.
-          produced = [userMessage, new AIMessage(TOO_MANY_STEPS_REPLY)];
           outcome = "step_limit";
-          steps = deps.settings.chat.maxToolRounds + 1;
+          steps = limits.maxToolRounds + 1;
+          // Research: one last call with no tools, to answer from what was found so far. Otherwise, or if
+          // that fails, keep the question and the apology; the half-finished tool calls are dropped.
+          const answered = research ? await answerFromProgress(deps.model, systemPrompt, latest, deps.settings.chat.toolTimeoutSeconds) : null;
+          produced = answered ? [...completedPrefix(latest).slice(history.length), answered] : [userMessage, new AIMessage(TOO_MANY_STEPS_REPLY)];
         }
 
         const stored = messagesToStored(produced);

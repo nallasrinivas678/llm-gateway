@@ -57,6 +57,8 @@ function problem(check: Check, trace: Trace): string | null {
       const actual = trace.outcomes[check.turn ?? trace.outcomes.length - 1];
       return actual === check.is ? null : `expected the run to end as ${check.is}, it ended as ${actual ?? "(no run)"}`;
     }
+    case "toolFlagged":
+      return trace.flagged.includes(check.name) ? null : `expected the answer of ${check.name} to be flagged`;
     case "decisionRefused":
       return trace.refused.some((r) => r.step === check.step && r.status === check.status) ? null : `expected step ${check.step} to be refused as ${check.status}`;
   }

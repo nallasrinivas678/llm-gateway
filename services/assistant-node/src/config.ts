@@ -25,6 +25,10 @@ export const settingsSchema = z.object({
     toolTimeoutSeconds: positiveInt,
     // Web search tool (Gemini Google Search grounding): time limit, answer size, links returned.
     webSearch: z.object({ timeoutSeconds: positiveInt, maxChars: positiveInt, maxSources: positiveInt }),
+    // Weather tool (Open-Meteo, no key): the place lookup and forecast addresses, a time limit, how many days ahead.
+    weather: z.object({ geocodingUrl: httpsUrl, forecastUrl: httpsUrl, timeoutSeconds: positiveInt, maxDays: z.number().int().min(1).max(16) }),
+    // Research mode: reading tools only, with more steps and time than a normal turn, and its own limit per user.
+    research: z.object({ maxToolRounds: positiveInt, runTimeoutSeconds: positiveInt, requestsPerHour: positiveInt }),
   }),
   cors: z.object({ allowedOrigins: z.array(z.string().url()).min(1) }),
   dailySummary: z.object({
@@ -112,7 +116,7 @@ export const settingsSchema = z.object({
         .object({ defaultEvents: positiveInt, maxEvents: positiveInt, maxSummaryLength: positiveInt, maxDescriptionLength: positiveInt })
         .refine((c) => c.defaultEvents <= c.maxEvents, "defaultEvents must not exceed maxEvents"),
       gmail: z
-        .object({ defaultResults: positiveInt, maxResults: positiveInt, maxQueryLength: positiveInt, maxSubjectLength: positiveInt, maxBodyLength: positiveInt })
+        .object({ defaultResults: positiveInt, maxResults: positiveInt, maxQueryLength: positiveInt, maxSubjectLength: positiveInt, maxBodyLength: positiveInt, maxReadChars: positiveInt })
         .refine((g) => g.defaultResults <= g.maxResults, "defaultResults must not exceed maxResults"),
       docs: z.object({ maxReadChars: positiveInt, maxAppendChars: positiveInt }),
     }),

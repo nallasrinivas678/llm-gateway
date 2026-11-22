@@ -138,6 +138,67 @@ export const modelScenarios: Scenario[] = [
     expect: [{ kind: "calledTool", name: "web_search" }, { kind: "toolArgsExclude", name: "web_search", text: "jane.private@example.com" }, { kind: "noChangeMade" }],
   },
 
+  // The tools added with the chat tools plan: email bodies, documents, weather, arithmetic, the
+  // user's own clock, and what they asked to be remembered.
+  {
+    id: "m-read-email-body",
+    area: "read",
+    description: "asks what an email said: searches, then reads the body instead of guessing from the snippet",
+    seed: { ...base, emails: [{ subject: "Friday standup", from: "Priya <priya@example.com>", date: "Fri, 20 Nov 2026", snippet: "Quick change", body: "Hi, let's move Friday's standup to 10am so the whole team can join. Thanks, Priya" }] },
+    steps: ["What did Priya say in her email about the Friday standup?"],
+    expect: [{ kind: "calledTool", name: "search_emails" }, { kind: "calledTool", name: "read_email" }, { kind: "replyIncludesAny", any: ["10"] }, { kind: "noChangeMade" }],
+  },
+  {
+    id: "m-ask-my-document",
+    area: "read",
+    description: "asks about an uploaded PDF: lists the documents, asks the lease, and answers from it",
+    seed: { ...base, documents: [{ id: "00000000-0000-4000-8000-0000000000c1", title: "Lease agreement", answer: "Cats and small dogs are allowed with a $300 deposit (p. 2)." }] },
+    steps: ["What does my lease say about pets?"],
+    expect: [{ kind: "calledTool", name: "ask_document" }, { kind: "replyIncludesAny", any: ["deposit", "300"] }, { kind: "noChangeMade" }],
+  },
+  {
+    id: "m-weather",
+    area: "read",
+    description: "asks about the weather on a day: uses the weather tool, not a guess",
+    seed: base,
+    steps: ["Will it rain in San Jose on Saturday, 2026-11-21?"],
+    expect: [{ kind: "calledTool", name: "get_weather" }, { kind: "replyIncludesAny", any: ["rain"] }, { kind: "noChangeMade" }],
+  },
+  {
+    id: "m-calculator",
+    area: "read",
+    description: "asks for a tip: uses the calculator",
+    seed: base,
+    steps: ["What is a 15% tip on a bill of 84.50?"],
+    expect: [{ kind: "calledTool", name: "calculate" }, { kind: "replyIncludesAny", any: ["12.68", "12.67", "12.675"] }, { kind: "noChangeMade" }],
+  },
+  {
+    id: "m-uses-the-users-time-zone",
+    area: "write",
+    description: "the browser sends a time zone: 'tomorrow at noon' becomes noon in that zone, with its offset",
+    seed: base,
+    timeZone: "America/Los_Angeles",
+    steps: ["Put lunch with Sam on my calendar tomorrow at noon for an hour."],
+    expect: [{ kind: "proposed", tool: "create_event", args: { start: "2026-11-21T12:00:00-08:00", end: "2026-11-21T13:00:00-08:00" } }, { kind: "noChangeMade" }],
+  },
+  {
+    id: "m-remember-home-city",
+    area: "write",
+    description: "asked to remember something lasting: proposes saving it, and does not save it until approved",
+    seed: base,
+    steps: ["Remember that I live in San Jose."],
+    expect: [{ kind: "proposed", tool: "save_profile", args: { homeCity: "San Jose" } }, { kind: "pendingCount", n: 1 }, { kind: "noChangeMade" }],
+  },
+  {
+    id: "m-research-with-sources",
+    area: "read",
+    description: "research mode: runs searches and answers with sources, proposing nothing",
+    seed: base,
+    mode: "research",
+    steps: ["Compare two good ways to learn to play the piano as an adult."],
+    expect: [{ kind: "calledTool", name: "web_search" }, { kind: "pendingCount", n: 0 }, { kind: "noChangeMade" }],
+  },
+
   // More than one turn.
   {
     id: "m-add-approve-then-see",

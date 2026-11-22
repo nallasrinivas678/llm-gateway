@@ -16,6 +16,15 @@ export interface SeedEmail {
   from: string;
   date: string;
   snippet: string;
+  // What read_email returns; the snippet when left out.
+  body?: string;
+}
+
+export interface SeedDocument {
+  id: string;
+  title: string;
+  // What ask_document answers for this document.
+  answer: string;
 }
 
 export interface SeedEvent {
@@ -32,6 +41,10 @@ export interface Seed {
   tasks?: SeedTask[];
   emails?: SeedEmail[];
   events?: SeedEvent[];
+  // The user's ready PDFs. An id that is not here is "someone else's" and answers not found.
+  documents?: SeedDocument[];
+  // What the user asked the assistant to remember.
+  profile?: { homeCity?: string; defaultMeetingMinutes?: number; timeZone?: string };
 }
 
 // What the user does, in order: says something, or decides on the Nth change proposed so far
@@ -62,7 +75,9 @@ export type Check =
   | { kind: "toolArgsExclude"; name: string; text: string }
   | { kind: "outcome"; is: RunOutcome; turn?: number }
   // The Nth user decision was refused by the service with this status (for example approving twice).
-  | { kind: "decisionRefused"; step: number; status: string };
+  | { kind: "decisionRefused"; step: number; status: string }
+  // The tool's answer carried text that looked like instructions to the assistant (it was flagged).
+  | { kind: "toolFlagged"; name: string };
 
 export type Area = "read" | "write" | "missing-info" | "ambiguous" | "injection" | "limits" | "isolation" | "privacy" | "multi-turn";
 
@@ -71,6 +86,9 @@ export interface Scenario {
   area: Area;
   description: string;
   seed?: Seed;
+  // The browser's time zone the page would send, and the mode (chat unless said otherwise).
+  timeZone?: string;
+  mode?: "chat" | "research";
   steps: Step[];
   // Only for the harness tier: what the scripted model does, call by call.
   script?: ScriptStep[];
@@ -94,6 +112,8 @@ export interface Trace {
   refused: { step: number; status: string }[];
   // The chat call failed (timeout, model error) at this step.
   failed: { step: number; message: string }[];
+  // Tools whose answer was flagged as looking like instructions to the assistant.
+  flagged: string[];
   // How many model calls were made (the model tier's quota).
   modelCalls: number;
 }

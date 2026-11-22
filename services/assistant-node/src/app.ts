@@ -33,9 +33,14 @@ export function createApp(config: Config, services: Services = {}) {
   const chatBody = z.object({
     conversationId: z.string().uuid().nullish(),
     message: z.string().trim().min(1).max(config.settings.chat.maxMessageLength),
+    // The browser's time zone; a value that is not a real zone is ignored by the service, not refused.
+    timeZone: z.string().max(64).nullish(),
+    mode: z.enum(["chat", "research"]).optional(),
   });
 
   const allowChat = createRateLimiter(config.settings.chat.requestsPerMinute);
+  // A research run uses many model calls, so it has its own, lower limit per user.
+  const allowResearch = createRateLimiter(config.settings.chat.research.requestsPerHour, Date.now, 60 * 60_000);
 
   assistant.post("/chat", async (c) => {
     if (!services.chat) return c.json({ error: "Chat is not configured on this server." }, 503);
@@ -43,6 +48,9 @@ export function createApp(config: Config, services: Services = {}) {
     const parsed = chatBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "Invalid request." }, 400);
     if (!allowChat(c.get("userId"))) return c.json({ error: "Too many messages. Wait a minute and try again." }, 429);
+    if (parsed.data.mode === "research" && !allowResearch(c.get("userId"))) {
+      return c.json({ error: "Too many research requests this hour. Try again later, or ask in normal chat." }, 429);
+    }
 
     try {
       const result = await services.chat.chat({
@@ -50,6 +58,8 @@ export function createApp(config: Config, services: Services = {}) {
         jwt: c.get("jwt"),
         conversationId: parsed.data.conversationId ?? undefined,
         message: parsed.data.message,
+        timeZone: parsed.data.timeZone ?? undefined,
+        mode: parsed.data.mode,
       });
       return c.json(result);
     } catch (error) {
