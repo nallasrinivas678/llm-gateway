@@ -45,6 +45,7 @@ describe("google-mcp server", () => {
       "create_event",
       "list_events",
       "read_doc",
+      "read_email",
       "search_emails",
     ]);
   });
@@ -169,6 +170,77 @@ describe("gmail tools", () => {
     const client = await connect("t", single({}).fetchFn);
     const result = await client.callTool({ name: "search_emails", arguments: { query: "nothing" } });
     expect(JSON.parse(firstText(result))).toEqual([]);
+  });
+
+  const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64url");
+  const headers = [
+    { name: "Subject", value: "Friday standup" },
+    { name: "From", value: "Priya <priya@example.com>" },
+    { name: "To", value: "me@example.com" },
+    { name: "Date", value: "Fri, 20 Nov 2026" },
+  ];
+  const readEmail = async (body: unknown, messageId = "msg12345", status = 200) => {
+    const google = single(body, status);
+    const client = await connect("token-alice", google.fetchFn);
+    const result = await client.callTool({ name: "read_email", arguments: { messageId } });
+    return { google, result };
+  };
+
+  it("reads an email's text, preferring the plain-text part, and lists attachments by name only", async () => {
+    const { google, result } = await readEmail({
+      id: "msg12345",
+      payload: {
+        headers,
+        mimeType: "multipart/mixed",
+        parts: [
+          { mimeType: "multipart/alternative", parts: [
+            { mimeType: "text/plain", body: { data: b64("Let's move standup to 10am.") } },
+            { mimeType: "text/html", body: { data: b64("<p>Let's move <b>standup</b> to 10am.</p>") } },
+          ] },
+          { mimeType: "application/pdf", filename: "agenda.pdf", body: { data: b64("%PDF secret") } },
+        ],
+      },
+    });
+    expect(JSON.parse(firstText(result))).toEqual({
+      id: "msg12345", subject: "Friday standup", from: "Priya <priya@example.com>", to: "me@example.com",
+      date: "Fri, 20 Nov 2026", body: "Let's move standup to 10am.", truncated: false, attachments: ["agenda.pdf"],
+    });
+    expect(google.calls[0]?.url).toContain("/messages/msg12345?format=full");
+    expect(authOf(google.calls[0])).toBe("Bearer token-alice");
+    expect(firstText(result)).not.toContain("secret");
+  });
+
+  it("turns an HTML-only email into plain text (no scripts, styles or tags, entities decoded)", async () => {
+    const html = "<style>p{color:red}</style><script>alert(1)</script><div>Hello&nbsp;Sam</div><p>Tom &amp; Jerry &#8212; &#x41;<br>Bye</p>";
+    const { result } = await readEmail({ id: "msg12345", payload: { headers, mimeType: "text/html", body: { data: b64(html) } } });
+    const { body } = JSON.parse(firstText(result)) as { body: string };
+    expect(body.split("\n")).toEqual(["Hello Sam", "Tom & Jerry — A", "Bye"]);
+  });
+
+  it("cuts a long body at the limit and says so", async () => {
+    const max = loadSettings().google.limits.gmail.maxReadChars;
+    const { result } = await readEmail({ id: "msg12345", payload: { headers, mimeType: "text/plain", body: { data: b64("x".repeat(max + 500)) } } });
+    const read = JSON.parse(firstText(result)) as { body: string; truncated: boolean };
+    expect(read.body).toHaveLength(max);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("handles a message with no readable body", async () => {
+    const { result } = await readEmail({ id: "msg12345" });
+    expect(JSON.parse(firstText(result))).toMatchObject({ subject: "", body: "", attachments: [] });
+  });
+
+  it("refuses an id that is not a Gmail message id, without calling Google", async () => {
+    const { google, result } = await readEmail({}, "../../drafts");
+    expect(result.isError).toBe(true);
+    expect(google.calls).toHaveLength(0);
+  });
+
+  it("tells the model Google rejected the request, without Google's text", async () => {
+    const { result } = await readEmail({ error: { message: "secret detail" } }, "msg12345", 403);
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toContain("reconnect");
+    expect(firstText(result)).not.toContain("secret");
   });
 
   it("creates a draft with an encoded message and says it was not sent", async () => {

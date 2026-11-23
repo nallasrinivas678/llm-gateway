@@ -4,7 +4,7 @@ import { loadSettings, type GoogleSettings } from "../config.js";
 import { assertEventTimes, createEvent, listEvents } from "./calendar.js";
 import { GoogleApiError, InvalidInputError, type FetchFn, type GoogleContext, fetchWithTimeout } from "./common.js";
 import { appendToDoc, readDoc } from "./docs.js";
-import { createDraft, searchEmails } from "./gmail.js";
+import { createDraft, readEmail, searchEmails } from "./gmail.js";
 import { writeShapes } from "./writeChecks.js";
 
 interface Deps {
@@ -83,6 +83,17 @@ export function createGoogleMcpServer(googleToken: string, deps: Deps = {}): Mcp
       },
     },
     ({ query, maxResults }) => run(async () => text(await searchEmails(ctx, query, maxResults))),
+  );
+
+  server.registerTool(
+    "read_email",
+    {
+      description:
+        "Read one email by its id (the id comes from search_emails): subject, sender, recipient, date and the text of the body, cut at a length limit. Attachments are listed by name only and are not opened." +
+        UNTRUSTED,
+      inputSchema: { messageId: z.string().min(8).max(64) },
+    },
+    ({ messageId }) => run(async () => text(await readEmail(ctx, messageId))),
   );
 
   server.registerTool(

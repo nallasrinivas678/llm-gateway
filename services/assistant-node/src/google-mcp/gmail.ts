@@ -32,6 +32,95 @@ export async function searchEmails(ctx: GoogleContext, query: string, maxResults
   );
 }
 
+// One message with its body. Bodies are untrusted text (anyone can send anyone an email), so the
+// tool description says so, and the length is cut to keep one email from flooding the context.
+export interface EmailBody {
+  id: string;
+  subject: string;
+  from: string;
+  to: string;
+  date: string;
+  body: string;
+  truncated: boolean;
+  // File names only; attachments are never opened.
+  attachments: string[];
+}
+
+interface GmailPart {
+  mimeType?: string;
+  filename?: string;
+  body?: { data?: string };
+  parts?: GmailPart[];
+  headers?: { name: string; value: string }[];
+}
+
+const MESSAGE_ID = /^[A-Za-z0-9_-]{8,64}$/;
+
+export function assertMessageId(messageId: string): void {
+  if (!MESSAGE_ID.test(messageId)) throw new InvalidInputError("That does not look like a Gmail message id. Use an id from search_emails.");
+}
+
+const decodeBase64Url = (data: string) => Buffer.from(data, "base64url").toString("utf8");
+
+const NAMED_ENTITIES: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+// Plain text from an HTML-only email: no scripts or styles, line breaks where blocks end, entities decoded.
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h[1-6])>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, entity: string) => {
+      if (entity[0] === "#") {
+        const code = entity[1]?.toLowerCase() === "x" ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
+        return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+      }
+      return NAMED_ENTITIES[entity.toLowerCase()] ?? whole;
+    })
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function collectParts(part: GmailPart, found: { plain: string[]; html: string[]; attachments: string[] }): void {
+  // A part with a file name is an attachment, whatever its type.
+  if (part.filename) {
+    found.attachments.push(part.filename);
+    return;
+  }
+  if (part.mimeType === "text/plain" && part.body?.data) found.plain.push(decodeBase64Url(part.body.data));
+  else if (part.mimeType === "text/html" && part.body?.data) found.html.push(decodeBase64Url(part.body.data));
+  for (const child of part.parts ?? []) collectParts(child, found);
+}
+
+export async function readEmail(ctx: GoogleContext, messageId: string): Promise<EmailBody> {
+  assertMessageId(messageId);
+  const message = await googleRequest<{ id: string; payload?: GmailPart }>(
+    "Gmail",
+    ctx,
+    `${ctx.settings.urls.gmailMessages}/${encodeURIComponent(messageId)}?format=full`,
+  );
+  const payload = message.payload ?? {};
+  const header = (name: string) => payload.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+
+  const found = { plain: [] as string[], html: [] as string[], attachments: [] as string[] };
+  collectParts(payload, found);
+  // Prefer the plain-text version; an HTML-only email is turned into text.
+  const full = (found.plain.length > 0 ? found.plain.join("\n") : found.html.map(htmlToText).join("\n")).trim();
+  const max = ctx.settings.limits.gmail.maxReadChars;
+  return {
+    id: message.id,
+    subject: header("Subject"),
+    from: header("From"),
+    to: header("To"),
+    date: header("Date"),
+    body: full.slice(0, max),
+    truncated: full.length > max,
+    attachments: found.attachments,
+  };
+}
+
 const toBase64Url = (value: Buffer | string) => Buffer.from(value).toString("base64url");
 
 // Builds a plain-text RFC 2822 message. Line breaks in the address or subject would let a

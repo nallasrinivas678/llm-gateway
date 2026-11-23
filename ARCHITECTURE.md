@@ -73,7 +73,7 @@ All lines exist today for chat. The daily summary reads Google and calls Gemini 
 | Approval of writes: proposals saved in `agent_actions`, approve and reject endpoints | `src/chat/approval.ts`, `src/chat/actionStore.ts` | built, tested; checked live for tasks (Google tools not yet) |
 | Run record: one `agent_runs` row per chat turn (time, steps, tools, outcome; no text) | `src/chat/runRecord.ts` | built, tested; checked live |
 | Checks on Google write calls before they are proposed | `src/google-mcp/writeChecks.ts` | built, tested |
-| Agent evals: harness tier (scripted model, in `npm test`) and model tier (real model, on demand) | `services/assistant-node/evals/agent/` | built; the model tier has run 4 of 14 scenarios so far (quota) |
+| Agent evals: harness tier (scripted model, in `npm test`) and model tier (real model, on demand) | `services/assistant-node/evals/agent/` | built; the model tier has run 4 of 21 scenarios so far (quota) |
 | Daily summary: fixed pipeline (Gmail and Calendar in parallel, one model call), 15-minute cache, JSON and SSE endpoints | `src/dailySummary/` | built, tested; checked live (about 7-9 s cold, 0.6 s of it fetching; the model is the rest) |
 | PDF Q&A | `src/docQa/` | built, tested |
 
@@ -85,6 +85,7 @@ The tool server lives in `src/google-mcp/`. For every request a fresh server is 
 |---|---|
 | `list_events`, `create_event` | Read and add events on the primary calendar (all-day events handled) |
 | `search_emails` | Gmail search; returns subject, sender, date, snippet |
+| `read_email` | Reads one email by the id `search_emails` returns: headers and the text of the body (plain text preferred, HTML turned into text), cut at 8,000 characters; attachments are listed by name and never opened |
 | `create_draft` | Saves a Gmail draft. **Nothing in the service can send email**; the user reviews and sends the draft themselves |
 | `read_doc`, `append_to_doc` | Read a Google Doc (cut at 20,000 characters) and add text to the end |
 
@@ -125,7 +126,7 @@ sequenceDiagram
 
 1. The login token is checked and the user id is taken from it. A per-user limit stops message floods (429).
 2. Conversations are read and written with a Supabase client that carries the **user's own token**, so row-level security decides what that user may see. The service holds no powerful database key for this. A `conversationId` that belongs to someone else looks exactly like one that does not exist (404).
-3. The Google token service supplies the user's Google token, and a fresh Google tool server is connected to the agent in memory (no network hop). If the user has not connected Google, the chat continues without those tools and the model is told. Task tools use the user's own Supabase client too; web search is a separate Gemini request with Google Search grounding, and the prompt forbids putting private details in a query.
+3. The Google token service supplies the user's Google token, and a fresh Google tool server is connected to the agent in memory (no network hop). If the user has not connected Google, the chat continues without those tools and the model is told. Task tools use the user's own Supabase client too; web search is a separate Gemini request with Google Search grounding, and the prompt forbids putting private details in a query. The other chat tools are listed under "More chat tools" below.
 4. The agent (LangChain `createAgent` with `gemini-2.5-flash`) answers, calling tools as needed. Going over 5 tool rounds gives a polite "couldn't finish" reply, not an error.
 5. All new messages of the turn are saved in one insert, so a failed run saves nothing. Messages are stored in the same format the .NET service uses, so a conversation can be continued by either service.
 
@@ -149,7 +150,7 @@ sequenceDiagram
 | Logs: one JSON line per event with the error's type, status and code, never message text | built |
 | **Approval before any write.** A write tool (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) saves a pending row in `agent_actions` instead of running; the page shows a card with Approve and Reject; approval runs the stored, checked arguments, not a second model call. Every write is approved at first. | built (see below) |
 | **Run record.** One `agent_runs` row per turn: time taken, model steps, each tool's name, time and success, how it ended (`ok`, `step_limit`, `timeout`, `error`) and how many changes it proposed. No message text, arguments or answers. A failure to save it is logged and never changes the reply. | built (see below) |
-| **Agent evals.** Two tiers on a fake backend, scored in plain code: the harness tier (a scripted model does the worst thing; 17 scenarios, in `npm test`) and the model tier (the real model; 14 scenarios, on demand). | built (see below) |
+| **Agent evals.** Two tiers on a fake backend, scored in plain code: the harness tier (a scripted model does the worst thing; 24 scenarios, in `npm test`) and the model tier (the real model; 21 scenarios, on demand). | built (see below) |
 
 #### Worked example: where the harness sits around the Google tools
 
@@ -298,6 +299,21 @@ Google answers `{"id":"r-123…"}` and the tool returns "Draft created (id r-123
 | `mcpTools.ts` | Reads `listTools`, wraps `callTool` as LangChain tools with a timeout, returns failures as text |
 | `chatService.ts` | Connects server and client per request; runs approved actions through the same tools |
 | `approval.ts` | Intercepts write tools so MCP is only reached after approval |
+
+#### More chat tools (CHAT_TOOLS_PLAN.md)
+
+| Tool | Kind | What it does |
+|---|---|---|
+| `read_email` | read | The body of one email (above) |
+| `list_documents`, `ask_document` | read | The user's ready PDFs, and an answer from one of them with its pages, through the same PDF Q&A service (`chat/documentTools.ts`); a question asked here is also saved in that document's Q&A history. Left out when PDF Q&A is not set up |
+| `get_weather` | read | Up to 7 days of forecast for a place from Open-Meteo (no key; only the place name leaves the service) (`chat/weatherTool.ts`) |
+| `calculate` | read | Arithmetic with a small hand-written parser, never `eval` (`chat/calculatorTool.ts`) |
+| `save_profile` | **write** | Remembers a lasting preference (home city, usual meeting length, time zone) in `user_profile`; proposed like every write and saved on approval |
+
+* **The user's clock.** The chat page sends the browser's IANA time zone in `POST /assistant/chat` (`timeZone`; a name that is not a real zone is ignored). The prompt then gives the user's local date and time and UTC offset instead of "today in UTC" (`chat/localTime.ts`), and says to write event times with the offset that applies on the event's date. A time zone saved in the profile wins over the browser's.
+* **The profile.** One row per user in `user_profile` (home city, usual meeting length, time zone; row-level security). It is read once per turn into the prompt; only an approved `save_profile` card changes it. A failure to read it never stops the chat.
+* **Outside text is labelled.** `search_emails`, `read_email`, `read_doc`, `web_search`, `ask_document` and `list_tasks` answers go through `withScan` (`chat/injectionScan.ts`): wrapped in a block that says it is data, and, when a short list of well-known phrasings matches ("ignore previous instructions", "forward this to a@b.c", and so on), preceded by a warning to pass on. Nothing is removed or blocked; the tool call in the run record gets `flagged: true`. It is a heuristic and a second layer: the approval gate remains the protection.
+* **Research mode.** `POST /assistant/chat` with `mode: "research"` (a switch on the chat page): reading tools only (every tool in `WRITE_TOOLS` is left out, so there are no cards), `chat.research` limits (12 tool rounds, 120 seconds) and its own per-user limit (10 an hour), and a prompt that asks for sub-questions, several searches, and an answer with sources. When it runs out of steps it makes one last call without tools to answer from what it found (the normal chat just apologises). A 120 second request needs the host and any proxy in front of it to allow it.
 
 #### Where LangChain fits, and how tool results reach the model
 

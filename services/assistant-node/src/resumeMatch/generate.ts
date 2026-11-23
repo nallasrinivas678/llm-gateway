@@ -28,13 +28,13 @@ export function isQuotaError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 429;
 }
 
-// Allows `limit` calls per user in any 60-second window. In memory, per machine: enough to stop one
-// user from running up model costs by accident, not a shared quota.
-export function createRateLimiter(limit: number, now: () => number = Date.now) {
+// Allows `limit` calls per user in any window (a minute unless said otherwise). In memory, per
+// machine: enough to stop one user from running up model costs by accident, not a shared quota.
+export function createRateLimiter(limit: number, now: () => number = Date.now, windowMs = 60_000) {
   const calls = new Map<string, number[]>();
   return (userId: string): boolean => {
     const time = now();
-    const recent = (calls.get(userId) ?? []).filter((t) => time - t < 60_000);
+    const recent = (calls.get(userId) ?? []).filter((t) => time - t < windowMs);
     if (recent.length >= limit) {
       calls.set(userId, recent);
       return false;

@@ -5,6 +5,7 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFailureText } from "./approval.js";
+import { INJECTION_WARNING } from "./injectionScan.js";
 
 export type RunOutcome = "ok" | "step_limit" | "timeout" | "error";
 
@@ -14,6 +15,8 @@ export interface RecordedToolCall {
   ok: boolean;
   // Only when it failed: "timeout", "failed" (the tool answered with a failure) or "error" (it threw).
   code?: "timeout" | "failed" | "error";
+  // Set when the answer carried text that looked like instructions to the assistant (see injectionScan).
+  flagged?: true;
 }
 
 export interface RunRecord {
@@ -68,7 +71,13 @@ export function withTiming(tools: DynamicStructuredTool[], calls: RecordedToolCa
             const answer = await tool.invoke(args);
             const text = typeof answer === "string" ? answer : "";
             const failed = isFailureText(text);
-            calls.push({ name: tool.name, ms: Math.round(clock() - started), ok: !failed, ...(failed ? { code: TIMED_OUT.test(text) ? ("timeout" as const) : ("failed" as const) } : {}) });
+            calls.push({
+              name: tool.name,
+              ms: Math.round(clock() - started),
+              ok: !failed,
+              ...(failed ? { code: TIMED_OUT.test(text) ? ("timeout" as const) : ("failed" as const) } : {}),
+              ...(text.includes(INJECTION_WARNING) ? { flagged: true as const } : {}),
+            });
             return answer;
           } catch (error) {
             calls.push({ name: tool.name, ms: Math.round(clock() - started), ok: false, code: error instanceof Error && TIMED_OUT.test(error.message) ? "timeout" : "error" });

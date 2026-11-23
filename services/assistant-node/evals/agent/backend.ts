@@ -10,6 +10,10 @@ import { rowToMessage, type StoredMessage } from "../../src/chat/messageMapper.j
 import type { RunRecord, RunStore } from "../../src/chat/runRecord.js";
 import type { TaskStore, TaskSummary } from "../../src/chat/taskTools.js";
 import type { WebSearchFn } from "../../src/chat/webSearch.js";
+import type { DocumentAccess } from "../../src/chat/documentTools.js";
+import { describePatch, type Profile, type ProfileStore } from "../../src/chat/profileTool.js";
+import type { WeatherFn } from "../../src/chat/weatherTool.js";
+import { DocNotFoundError } from "../../src/docQa/errors.js";
 import type { FetchFn } from "../../src/google-mcp/common.js";
 import type { Seed } from "./types.js";
 
@@ -70,14 +74,15 @@ export function createBackend(seed: Seed = {}) {
     if (url.startsWith(urls.gmailMessages) && method === "GET") {
       const emails = seed.emails ?? [];
       const one = url.slice(urls.gmailMessages.length + 1).split("?")[0];
-      if (!one) return json({ messages: emails.map((_, i) => ({ id: `m${i}` })) });
-      const email = emails[Number(one.replace("m", ""))];
+      if (!one) return json({ messages: emails.map((_, i) => ({ id: `email-id-${i}` })) });
+      const email = emails[Number(one.replace("email-id-", ""))];
       if (!email) return json({}, 404);
-      return json({
-        id: one,
-        snippet: email.snippet,
-        payload: { headers: [{ name: "Subject", value: email.subject }, { name: "From", value: email.from }, { name: "Date", value: email.date }] },
-      });
+      const headers = [{ name: "Subject", value: email.subject }, { name: "From", value: email.from }, { name: "Date", value: email.date }];
+      // format=full is read_email: the whole body. Anything else is the search's short view.
+      if (url.includes("format=full")) {
+        return json({ id: one, payload: { headers, mimeType: "text/plain", body: { data: Buffer.from(email.body ?? email.snippet, "utf8").toString("base64url") } } });
+      }
+      return json({ id: one, snippet: email.snippet, payload: { headers } });
     }
     // Everything else changes something in the user's Google account.
     changes.push(`google ${method} ${url.startsWith(urls.calendarEvents) ? "calendar" : url.startsWith(urls.gmailDrafts) ? "gmail draft" : url.startsWith(urls.docsDocuments) ? "docs" : "other"}`);
@@ -88,6 +93,40 @@ export function createBackend(seed: Seed = {}) {
     searches.push(query);
     return { answer: "It is open from 9 to 5 and the forecast is mild.", sources: [{ title: "Example", url: "https://example.org" }] };
   };
+
+  // The profile, the user's PDFs and the weather. A saved profile counts as a real change.
+  let profile: Profile = { homeCity: seed.profile?.homeCity ?? null, defaultMeetingMinutes: seed.profile?.defaultMeetingMinutes ?? null, timeZone: seed.profile?.timeZone ?? null };
+  const profileStore: ProfileStore = {
+    async get() {
+      return profile;
+    },
+    async save(patch) {
+      profile = { ...profile, ...patch };
+      changes.push(`profile saved: ${describePatch(patch)}`);
+      return profile;
+    },
+  };
+  const documents: DocumentAccess = {
+    async list() {
+      return (seed.documents ?? []).map((d) => ({ id: d.id, title: d.title, pageCount: 3 }));
+    },
+    async ask(documentId) {
+      const doc = (seed.documents ?? []).find((d) => d.id === documentId);
+      if (!doc) throw new DocNotFoundError();
+      return { answer: doc.answer, sources: [{ page: 2 }] };
+    },
+  };
+  const weather: WeatherFn = async (location) => ({
+    place: `${location}, United States`,
+    days: Array.from({ length: 7 }, (_, i) => ({
+      date: `2026-11-${String(20 + i).padStart(2, "0")}`,
+      highC: 17,
+      lowC: 8,
+      // Saturday the 21st is the rainy day.
+      rainChance: i === 1 ? 80 : 10,
+      summary: i === 1 ? "rain" : "partly cloudy",
+    })),
+  });
 
   // Conversations, proposals and run records, in memory.
   const conversations = new Map<string, StoredMessage[]>();
@@ -158,7 +197,7 @@ export function createBackend(seed: Seed = {}) {
     },
   };
 
-  return { taskStore, googleFetch, webSearch, conversationStore, actionStore, runStore, conversations, actions, changes, searches, runs };
+  return { taskStore, googleFetch, webSearch, profileStore, documents, weather, conversationStore, actionStore, runStore, conversations, actions, changes, searches, runs };
 }
 
 export type Backend = ReturnType<typeof createBackend>;

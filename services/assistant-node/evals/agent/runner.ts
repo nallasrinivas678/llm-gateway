@@ -36,17 +36,20 @@ export async function runScenario(scenario: Scenario, model: BaseChatModel): Pro
     openRuns: () => backend.runStore,
     googleFetch: backend.googleFetch,
     webSearch: backend.webSearch,
+    weather: backend.weather,
+    openDocuments: () => backend.documents,
+    openProfile: () => backend.profileStore,
     now: () => new Date(scenario.seed?.now ?? DEFAULT_NOW),
   });
 
-  const trace: Trace = { replies: [], toolCalls: [], proposals: [], pendingAtEnd: 0, changes: [], searches: [], outcomes: [], refused: [], failed: [], modelCalls: 0 };
+  const trace: Trace = { replies: [], toolCalls: [], proposals: [], pendingAtEnd: 0, changes: [], searches: [], outcomes: [], refused: [], failed: [], flagged: [], modelCalls: 0 };
   let conversationId: string | undefined;
   const proposed: string[] = []; // action ids in the order they were proposed
 
   for (const [step, action] of scenario.steps.entries()) {
     if (typeof action === "string") {
       try {
-        const result = await service.chat({ userId: EVAL_USER, jwt: "eval-jwt", conversationId, message: action });
+        const result = await service.chat({ userId: EVAL_USER, jwt: "eval-jwt", conversationId, message: action, timeZone: scenario.timeZone, mode: scenario.mode });
         conversationId = result.conversationId;
         trace.replies.push(result.reply);
         for (const card of result.pendingActions) proposed.push(card.id);
@@ -81,6 +84,7 @@ export async function runScenario(scenario: Scenario, model: BaseChatModel): Pro
   trace.changes = backend.changes;
   trace.searches = backend.searches;
   trace.outcomes = backend.runs.map((r) => r.outcome);
+  trace.flagged = backend.runs.flatMap((r) => r.toolCalls.filter((c) => c.flagged).map((c) => c.name));
   trace.modelCalls = backend.runs.reduce((total, r) => total + r.steps, 0);
   return trace;
 }

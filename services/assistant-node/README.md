@@ -164,8 +164,10 @@ Try it: `GET /assistant/whoami` with a valid token returns your user id.
 `POST /assistant/chat` (needs the `Authorization: Bearer <Supabase login token>` header). Same request and response as the .NET service:
 
 ```json
-{ "conversationId": "optional uuid, leave out to start a new conversation", "message": "What is on my calendar tomorrow?" }
+{ "conversationId": "optional uuid, leave out to start a new conversation", "message": "What is on my calendar tomorrow?", "timeZone": "optional, like America/Los_Angeles", "mode": "optional, 'research'" }
 ```
+
+`timeZone` is the browser's IANA time zone; the prompt then gives the model the user's own date, time and UTC offset (a name that is not a real zone is ignored). `mode: "research"` allows more steps and time, offers reading tools only (no changes, no cards) and asks for an answer with sources; it has its own limit per user (`chat.research`).
 
 ```json
 { "conversationId": "uuid", "reply": "You have ...", "toolCallsExecuted": ["list_events"] }
@@ -183,9 +185,13 @@ Limits: 10 messages per user per minute (`chat.requestsPerMinute`), a whole run 
 
 Errors: `400` bad request body, `401` no or bad login token, `404` conversation not found, `429` too many messages, `502` something failed inside (a generic message; details are only in the server log), `503` chat is switched off because a needed secret is missing (the startup log lists which), or the AI model's usage limit is reached ("The AI model's usage limit is reached. Try again later.", the same words resume match uses; the log records only the error name and status), `504` the run took too long.
 
+### Tools the chat has
+
+Google (`list_events`, `create_event`, `search_emails`, `read_email`, `create_draft`, `read_doc`, `append_to_doc`), `web_search`, the task tools, and the ones added by `CHAT_TOOLS_PLAN.md`: `list_documents` and `ask_document` (the user's uploaded PDFs, through PDF Q&A), `get_weather` (Open-Meteo, no key), `calculate` (a small parser, never `eval`) and `save_profile` (home city, usual meeting length, time zone; a write tool, so it needs approval). Answers that carry outside text (email, documents, web pages, PDFs, task notes) are labelled as data and carry a warning when they look like instructions to the assistant; the run record marks such a call `flagged`. The profile is the table `user_profile` (migration `20261122000000_user_profile.sql`). Settings: `chat.weather`, `chat.research` and `google.limits.gmail.maxReadChars` in `config/default.json`.
+
 ### Approving changes
 
-The tools that change something (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`) do not run when the model calls them. They save a proposal in `agent_actions` and the chat reply carries it: `pendingActions: [{ id, tool, preview }]`. The model is told it is waiting and must not say it is done. Reading tools run straight away.
+The tools that change something (`create_task`, `complete_task`, `create_event`, `create_draft`, `append_to_doc`, `save_profile`) do not run when the model calls them. They save a proposal in `agent_actions` and the chat reply carries it: `pendingActions: [{ id, tool, preview }]`. The model is told it is waiting and must not say it is done. Reading tools run straight away.
 
 - `POST /assistant/actions/:id/approve`: runs the stored arguments as the user, through the real tool. Returns `{ id, status: "done" | "failed", result }` (a short readable result).
 - `POST /assistant/actions/:id/reject`: `{ id, status: "rejected", result: null }`.

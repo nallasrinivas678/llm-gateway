@@ -4,9 +4,12 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseActionStore } from "./chat/actionStore.js";
 import { createChatService, type ChatService } from "./chat/chatService.js";
+import { createSupabaseDocumentList, type DocumentAccess } from "./chat/documentTools.js";
+import { createSupabaseProfileStore } from "./chat/profileTool.js";
 import { createSupabaseRunStore } from "./chat/runRecord.js";
 import { createSupabaseTaskStore } from "./chat/taskTools.js";
 import { createWebSearch } from "./chat/webSearch.js";
+import { createWeather } from "./chat/weatherTool.js";
 import { createSupabaseConversationStore } from "./chat/conversationStore.js";
 import type { Config } from "./config.js";
 import { createDailySummaryService, type DailySummaryService } from "./dailySummary/dailySummaryService.js";
@@ -164,6 +167,17 @@ export function buildServices(config: Config): Services {
     openActions: (userId, jwt) => createSupabaseActionStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
     openRuns: (userId, jwt) => createSupabaseRunStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
     webSearch: createWebSearch({ apiKey: GOOGLE_API_KEY, model: config.settings.chat.model, ...config.settings.chat.webSearch }),
+    weather: createWeather(config.settings.chat.weather),
+    openProfile: (userId, jwt) => createSupabaseProfileStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
+    // The PDFs are only offered when PDF Q&A itself is set up (same settings).
+    ...(docQa
+      ? {
+          openDocuments: (userId: string, jwt: string): DocumentAccess => ({
+            list: createSupabaseDocumentList(userClient(config, SUPABASE_ANON_KEY, jwt)),
+            ask: (documentId, question) => docQa.ask.ask(userId, jwt, documentId, question),
+          }),
+        }
+      : {}),
     openStore: (userId, jwt) => createSupabaseConversationStore(userClient(config, SUPABASE_ANON_KEY, jwt), userId),
   });
   return withResume({ chat, dailySummary, googleConnect });

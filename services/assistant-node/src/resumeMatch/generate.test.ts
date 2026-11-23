@@ -64,4 +64,15 @@ describe("createRateLimiter", () => {
     time = 60_001;
     expect(allow("a")).toBe(true);
   });
+
+  it("can count over a longer window, such as an hour", () => {
+    let time = 0;
+    const hour = 60 * 60_000;
+    const allow = createRateLimiter(1, () => time, hour);
+    expect(allow("a")).toBe(true);
+    time = 30 * 60_000;
+    expect(allow("a")).toBe(false);
+    time = hour + 1;
+    expect(allow("a")).toBe(true);
+  });
 });

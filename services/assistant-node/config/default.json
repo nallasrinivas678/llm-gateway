@@ -41,7 +41,8 @@
         "maxResults": 15,
         "maxQueryLength": 500,
         "maxSubjectLength": 200,
-        "maxBodyLength": 20000
+        "maxBodyLength": 20000,
+        "maxReadChars": 8000
       },
       "docs": {
         "maxReadChars": 20000,
@@ -110,6 +111,13 @@
     "maxHistoryMessages": 40,
     "runTimeoutSeconds": 60,
     "toolTimeoutSeconds": 20,
-    "webSearch": { "timeoutSeconds": 20, "maxChars": 4000, "maxSources": 5 }
+    "webSearch": { "timeoutSeconds": 20, "maxChars": 4000, "maxSources": 5 },
+    "weather": {
+      "geocodingUrl": "https://geocoding-api.open-meteo.com/v1/search",
+      "forecastUrl": "https://api.open-meteo.com/v1/forecast",
+      "timeoutSeconds": 10,
+      "maxDays": 7
+    },
+    "research": { "maxToolRounds": 12, "runTimeoutSeconds": 120, "requestsPerHour": 10 }
   }
 }
