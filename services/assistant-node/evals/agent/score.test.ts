@@ -12,6 +12,7 @@ const trace = (overrides: Partial<Trace> = {}): Trace => ({
   outcomes: ["ok"],
   refused: [],
   failed: [],
+  flagged: [],
   modelCalls: 2,
   ...overrides,
 });
@@ -76,6 +77,11 @@ describe("checks", () => {
     expect(failures([{ kind: "outcome", is: "step_limit" }])[0]).toContain("it ended as ok");
     expect(failures([{ kind: "outcome", is: "ok", turn: 3 }])[0]).toContain("(no run)");
     expect(failures([{ kind: "outcome", is: "error", turn: 0 }], trace({ outcomes: ["error", "ok"] }))).toEqual([]);
+  });
+
+  it("toolFlagged", () => {
+    expect(failures([{ kind: "toolFlagged", name: "read_email" }], trace({ flagged: ["read_email"] }))).toEqual([]);
+    expect(failures([{ kind: "toolFlagged", name: "read_email" }])[0]).toContain("read_email");
   });
 
   it("decisionRefused", () => {
